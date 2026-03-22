@@ -1,7 +1,8 @@
 # MTS — AI-Native Agentic System
 
-**Project:** Mecklenburg Tutorial Services
-**Purpose:** Automate curriculum, worksheet generation, assessment, and program management using an agentic AI system.
+**Project:** Masters Tuition Services LLC
+**Tagline:** "Making Academic Tuition More Enjoyable, Effective, & Affordable"
+**Purpose:** Build an AI-native system that supports MTS teachers in delivering high-quality, curriculum-aligned education to students in Grades 2–10. The system automates content generation (worksheets, answer keys, lesson plans) so that teachers can focus on judgment, connection, and care — while every output upholds the MTS standard: correct, clear, and student-first.
 
 ---
 
