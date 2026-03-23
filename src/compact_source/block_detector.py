@@ -333,7 +333,10 @@ class BlockDetector:
                 continue
             candidates.append(choice)
 
-        if not candidates:
+        if len(candidates) < 2:
+            # A single match is almost always a false positive (e.g., a stem line
+            # like "Find the value of A and B" → "A " matches the pattern).
+            # Real answer sets always have at least two detectable choice lines.
             return None
         # The last candidate by document position is the final answer choice
         return max(candidates, key=lambda c: (c.page_number, c.y_top))
@@ -443,9 +446,19 @@ class BlockDetector:
                 tight_bottom_page = last_choice.page_number
                 tight_bottom_y = last_choice.y_bottom + BLOCK_BOTTOM_PADDING
             else:
-                # Fallback for image-based choices: use preliminary boundary
-                # (some trailing whitespace may remain, but block is not oversized)
-                tight_bottom_page = prelim_end_page
+                # Fallback for image-based choices: cap to current page to avoid
+                # capturing the next page's header/passage text in this block's image.
+                if prelim_end_page > marker.page_number:
+                    tight_bottom_page = marker.page_number
+                    tight_bottom_y = page_heights[marker.page_number]
+                else:
+                    tight_bottom_page = prelim_end_page
+                    tight_bottom_y = prelim_end_y
+
+            # Clamp: BLOCK_BOTTOM_PADDING must not push the bottom past the next
+            # question's start on the same page — that would create a 4-pt region
+            # of overlap where the next question's text appears in this block's image.
+            if tight_bottom_page == prelim_end_page and tight_bottom_y > prelim_end_y:
                 tight_bottom_y = prelim_end_y
 
             y_top = max(0.0, marker.y_top - BLOCK_TOP_PADDING)

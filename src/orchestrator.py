@@ -13,7 +13,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.compact_source.block_detector import BlockDetector, BlockDetectionError
+from src.compact_source.block_detector import (
+    BlockDetector,
+    BlockDetectionError,
+    BlockDetectionResult,
+)
 from src.compact_source.block_extractor import BlockExtractor
 from src.compact_source.pdf_packer import PdfPacker
 from src.compact_source.reporter import Reporter
@@ -22,7 +26,14 @@ from src.utils.claude_client import ClaudeClient
 from src.utils.pdf_utils import get_page_count
 
 
-def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
+def run_compact_source(
+    pdf_path: Path,
+    grade: int,
+    subject: str,
+    scale_factor: float = None,
+    max_block_pages: int = None,
+    problem_list: str | None = None,
+) -> None:
     """
     Execute the full compact_source pipeline for a given source worksheet PDF.
 
@@ -52,8 +63,16 @@ def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
             "Check the file path and try again."
         )
 
+    from src.config import BLOCK_SCALE_FACTOR, DEFAULT_MAX_BLOCK_PAGES
+
+    if scale_factor is None:
+        scale_factor = BLOCK_SCALE_FACTOR
+
+    if max_block_pages is None:
+        max_block_pages = DEFAULT_MAX_BLOCK_PAGES
+
     print(f"\n[MTS] compact_source — {pdf_path.name}")
-    print(f"[MTS] Grade: {grade} | Subject: {subject}")
+    print(f"[MTS] Grade: {grade} | Subject: {subject} | Scale: {scale_factor}%")
 
     claude_client = ClaudeClient()
     artifact_writer = ArtifactWriter()
@@ -69,6 +88,38 @@ def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
     print("[1/3] Detecting question blocks...")
     detector = BlockDetector(claude_client)
     detection_result = detector.detect(pdf_path)
+    # Apply problem list filter (e.g., ALL, "1-10", "1,3,5")
+    def _parse_problem_list(plist: str | None):
+        if not plist:
+            return None
+        s = plist.strip()
+        if s.upper() == "ALL":
+            return None
+        nums: set[int] = set()
+        for part in s.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                a, b = part.split("-", 1)
+                nums.update(range(int(a), int(b) + 1))
+            else:
+                nums.add(int(part))
+        return nums
+
+    selected = _parse_problem_list(problem_list)
+    if selected is not None:
+        filtered_blocks = [b for b in detection_result.blocks if b.question_number in selected]
+    else:
+        filtered_blocks = detection_result.blocks
+    # Build a replacement detection_result for reporting using filtered blocks
+    detection_result = BlockDetectionResult(
+        blocks=filtered_blocks,
+        total_questions=len(filtered_blocks),
+        page_heights=detection_result.page_heights,
+        page_widths=detection_result.page_widths,
+        used_vision_fallback=detection_result.used_vision_fallback,
+    )
     print(
         f"      {detection_result.total_questions} question blocks detected"
         + (" (vision fallback used)" if detection_result.used_vision_fallback else "")
@@ -82,7 +133,7 @@ def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
 
     # ── Step 3: Pack into output PDF ──────────────────────────────────────────
     print("[3/3] Packing blocks into output PDF...")
-    packer = PdfPacker()
+    packer = PdfPacker(scale_factor=scale_factor, max_block_pages=max_block_pages)
     output_pdf_path = artifact_writer.bin_path("compacted-source.pdf")
     output_page_count = packer.pack(extracted_blocks, output_pdf_path)
     print(f"      Output: {output_page_count} pages -> {output_pdf_path}")
@@ -163,6 +214,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--subject", type=str, default="Math",
         help="Subject area (default: Math)",
     )
+    compact_parser.add_argument(
+        "--scale-factor", type=float, default=None,
+        help=(
+            "Scale blocks as %% of their natural fit width "
+            "(default: BLOCK_SCALE_FACTOR from config, initially 100). "
+            "Example: --scale-factor 85 shrinks each block to 85%%."
+        ),
+    )
 
     worksheet_parser = subparsers.add_parser(
         "generate_worksheet",
@@ -186,6 +245,7 @@ def main() -> None:
             pdf_path=args.pdf,
             grade=args.grade,
             subject=args.subject,
+            scale_factor=args.scale_factor,
         )
     elif args.mode == "generate_worksheet":
         run_generate_worksheet(request_path=args.request)

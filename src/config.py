@@ -58,6 +58,20 @@ OUTPUT_PAGE_HEIGHT_PTS: float = float(os.getenv("OUTPUT_PAGE_HEIGHT_PTS", "792")
 # Margin applied to all four sides of each output page (0.25 inch).
 OUTPUT_PAGE_MARGIN_PTS: float = float(os.getenv("OUTPUT_PAGE_MARGIN_PTS", "18"))
 
+# Block scaling factor as a percentage of the source block's natural fit width.
+# 100 = original size (block fills the content width).
+# Values < 100 shrink blocks (e.g., 85 = 85%) to fit more per output page.
+# Values > 100 enlarge blocks beyond their natural fit width (rarely useful).
+# Override per-run with --scale-factor on the command line.
+BLOCK_SCALE_FACTOR: float = float(os.getenv("BLOCK_SCALE_FACTOR", "100"))
+
+# Default maximum number of output pages a single block may occupy before
+# being scaled down. Setting to 2 allows a block to span up to 2 output pages
+# (useful for very tall multi-page questions). This can be overridden via
+# CLI `--max-block-pages` for a single run or by setting DEFAULT_MAX_BLOCK_PAGES
+# in the environment.
+DEFAULT_MAX_BLOCK_PAGES: int = int(os.getenv("DEFAULT_MAX_BLOCK_PAGES", "2"))
+
 # ─── Pipeline Control ─────────────────────────────────────────────────────────
 
 # Maximum QA retry loops before escalating to a human reviewer
