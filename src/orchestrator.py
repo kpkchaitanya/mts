@@ -111,7 +111,7 @@ def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
     compacted_md_content = header + compacted_body
     artifact_writer.write("compacted-source.md", compacted_md_content)
 
-    pdf_output_path = artifact_writer.artifact_path("compacted-source.pdf")
+    pdf_output_path = artifact_writer.bin_path("compacted-source.pdf")
     render_markdown_to_pdf(compacted_md_content, pdf_output_path)
 
     # ── Step 5: Generate compaction report ───────────────────────────────────

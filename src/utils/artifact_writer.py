@@ -97,3 +97,21 @@ class ArtifactWriter:
             Full Path for the artifact in this run's folder.
         """
         return self.run_path / filename
+
+    def bin_path(self, filename: str) -> Path:
+        """
+        Return the full path for a binary artifact in the run's bin/ subfolder.
+
+        The bin/ directory is created on first call. Use this for compiled or
+        rendered binary outputs (e.g., PDFs) to keep them separate from text
+        artifacts in the run root.
+
+        Args:
+            filename: Binary artifact filename (e.g., "compacted-source.pdf").
+
+        Returns:
+            Full Path inside <run_path>/bin/.
+        """
+        bin_dir = self.run_path / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        return bin_dir / filename
