@@ -44,6 +44,20 @@ MIN_CONTENT_PAGE: int = int(os.getenv("MIN_CONTENT_PAGE", "1"))
 # Q1 is rarely beyond page 5 in standard state exam formats.
 MAX_VISION_SCAN_PAGES: int = 5
 
+# Maximum number of source pages a single question block may span.
+# Markers spanning more pages than this with no detectable answer choices are
+# treated as non-question content (formula charts, instructions, etc.) and filtered out.
+MAX_QUESTION_SPAN_PAGES: int = int(os.getenv("MAX_QUESTION_SPAN_PAGES", "2"))
+
+# ─── Output PDF Layout ────────────────────────────────────────────────────────
+
+# Letter page dimensions in PDF points (1 pt = 1/72 inch).
+OUTPUT_PAGE_WIDTH_PTS: float = float(os.getenv("OUTPUT_PAGE_WIDTH_PTS", "612"))   # 8.5 in
+OUTPUT_PAGE_HEIGHT_PTS: float = float(os.getenv("OUTPUT_PAGE_HEIGHT_PTS", "792")) # 11 in
+
+# Margin applied to all four sides of each output page (0.25 inch).
+OUTPUT_PAGE_MARGIN_PTS: float = float(os.getenv("OUTPUT_PAGE_MARGIN_PTS", "18"))
+
 # ─── Pipeline Control ─────────────────────────────────────────────────────────
 
 # Maximum QA retry loops before escalating to a human reviewer
@@ -52,10 +66,6 @@ MAX_QA_RETRIES: int = int(os.getenv("MAX_QA_RETRIES", "2"))
 # Minimum confidence for text-based boundary detection (0.0–1.0).
 # Below this threshold, Claude vision is used as a fallback.
 BOUNDARY_DETECTION_MIN_CONFIDENCE: float = 0.7
-
-# Estimated lines of question content that fit on one printed page.
-# Used by the reporter to estimate compacted page count.
-LINES_PER_PAGE_ESTIMATE: int = 40
 
 # ─── Startup Validation ───────────────────────────────────────────────────────
 

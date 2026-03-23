@@ -13,38 +13,38 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.compact_source.boundary_detector import BoundaryDetector, BoundaryNotFoundError
-from src.compact_source.compactor import Compactor
+from src.compact_source.block_detector import BlockDetector, BlockDetectionError
+from src.compact_source.block_extractor import BlockExtractor
+from src.compact_source.pdf_packer import PdfPacker
 from src.compact_source.reporter import Reporter
-from src.compact_source.stripper import Stripper
 from src.utils.artifact_writer import ArtifactWriter
 from src.utils.claude_client import ClaudeClient
-from src.utils.pdf_utils import extract_text_by_page, get_page_count
-from src.utils.markdown_utils import frontmatter, horizontal_rule
-from src.utils.pdf_renderer import render_markdown_to_pdf
-from src.config import LINES_PER_PAGE_ESTIMATE
+from src.utils.pdf_utils import get_page_count
 
 
 def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
     """
-    Execute the full compact_source pipeline for a given state exam PDF.
+    Execute the full compact_source pipeline for a given source worksheet PDF.
 
     Pipeline steps:
-    1. Extract text from all PDF pages
-    2. BoundaryDetector  → locate Q1 and Qn
-    3. Stripper          → remove pre/post content, write source-boundary-map.md
-    4. Compactor         → reflow questions, eliminate gaps
-    5. Reporter          → validate integrity, write compaction-report.md
-    6. ArtifactWriter    → write compacted-source.md
+    1. BlockDetector  — locate question blocks using pdfplumber y-coordinates
+    2. BlockExtractor — crop each block region from the rendered source pages
+    3. PdfPacker      — pack cropped block images into a compact output PDF
+    4. Reporter       — validate integrity, write source-boundary-map.md
+                        and compaction-report.md
+
+    No text is re-rendered at any step. All content is carried as cropped
+    images from the original PDF, preserving math symbols, graphs, and
+    diagrams exactly as they appear in the source.
 
     Args:
-        pdf_path: Path to the input PDF file.
-        grade: Grade level of the exam.
+        pdf_path: Path to the input source worksheet PDF.
+        grade: Grade level.
         subject: Subject area (e.g., "Math").
 
     Raises:
         FileNotFoundError: If the PDF does not exist at pdf_path.
-        BoundaryNotFoundError: If question boundaries cannot be detected.
+        BlockDetectionError: If question boundaries cannot be detected.
     """
     if not pdf_path.exists():
         raise FileNotFoundError(
@@ -55,7 +55,6 @@ def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
     print(f"\n[MTS] compact_source — {pdf_path.name}")
     print(f"[MTS] Grade: {grade} | Subject: {subject}")
 
-    # Initialize shared dependencies used across pipeline steps
     claude_client = ClaudeClient()
     artifact_writer = ArtifactWriter()
     source_filename = pdf_path.name
@@ -63,81 +62,57 @@ def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
     print(f"[MTS] Run ID: {artifact_writer.run_id}")
     print(f"[MTS] Artifacts: {artifact_writer.run_path}\n")
 
-    # ── Step 1: Extract text from all pages ──────────────────────────────────
-    print("[1/4] Extracting text from PDF...")
-    page_texts = extract_text_by_page(pdf_path)
     original_page_count = get_page_count(pdf_path)
-    print(f"      {original_page_count} pages found")
+    print(f"[MTS] Source: {original_page_count} pages")
 
-    # ── Step 2: Detect question boundaries ───────────────────────────────────
-    print("[2/4] Detecting question boundaries...")
-    detector = BoundaryDetector(claude_client)
-    boundaries = detector.detect(pdf_path, page_texts)
+    # ── Step 1: Detect question blocks ───────────────────────────────────────
+    print("[1/3] Detecting question blocks...")
+    detector = BlockDetector(claude_client)
+    detection_result = detector.detect(pdf_path)
     print(
-        f"      Q1 on page {boundaries.first_question.page_number} | "
-        f"Q{boundaries.total_questions} on page {boundaries.last_question.page_number} | "
-        f"Total: {boundaries.total_questions} questions"
-    )
-    if boundaries.used_vision_fallback:
-        print("      (Claude vision fallback used for boundary detection)")
-
-    # ── Step 3: Strip non-question content ───────────────────────────────────
-    print("[3/4] Stripping non-question content...")
-    stripper = Stripper()
-    stripped_content, boundary_map_md = stripper.strip(
-        page_texts, boundaries, source_filename, artifact_writer.run_id, grade, subject
-    )
-    artifact_writer.write("source-boundary-map.md", boundary_map_md)
-    print(
-        f"      Removed ~{stripped_content.lines_removed_before} lines before Q1, "
-        f"~{stripped_content.lines_removed_after} lines after Qn"
+        f"      {detection_result.total_questions} question blocks detected"
+        + (" (vision fallback used)" if detection_result.used_vision_fallback else "")
     )
 
-    # ── Step 4: Compact the stripped content ─────────────────────────────────
-    print("[4/4] Compacting questions...")
-    compactor = Compactor()
-    compacted_body = compactor.compact(stripped_content)
+    # ── Step 2: Extract block images ─────────────────────────────────────────
+    print("[2/3] Extracting question block images...")
+    extractor = BlockExtractor()
+    extracted_blocks = extractor.extract(pdf_path, detection_result.blocks)
+    print(f"      {len(extracted_blocks)} block images extracted")
 
-    # Prepend a standard header to the compacted output for traceability
-    header = (
-        "# Compacted Source\n\n"
-        + frontmatter(artifact_writer.run_id, source_filename, grade, subject)
-        + horizontal_rule()
-        + f"**Questions:** {boundaries.total_questions} | "
-        f"**Original pages:** {original_page_count}\n"
-        + horizontal_rule()
-        + "\n"
-    )
-    compacted_md_content = header + compacted_body
-    artifact_writer.write("compacted-source.md", compacted_md_content)
+    # ── Step 3: Pack into output PDF ──────────────────────────────────────────
+    print("[3/3] Packing blocks into output PDF...")
+    packer = PdfPacker()
+    output_pdf_path = artifact_writer.bin_path("compacted-source.pdf")
+    output_page_count = packer.pack(extracted_blocks, output_pdf_path)
+    print(f"      Output: {output_page_count} pages -> {output_pdf_path}")
 
-    pdf_output_path = artifact_writer.bin_path("compacted-source.pdf")
-    render_markdown_to_pdf(compacted_md_content, pdf_output_path)
-
-    # ── Step 5: Generate compaction report ───────────────────────────────────
-    # Estimate compacted page count from line count and configured lines-per-page
-    compacted_line_count = len(compacted_body.splitlines())
-    compacted_page_estimate = max(1, compacted_line_count // LINES_PER_PAGE_ESTIMATE)
-
+    # ── Step 4: Generate reports ──────────────────────────────────────────────
     reporter = Reporter()
-    report_md, passed = reporter.generate(
-        compacted_markdown=compacted_body,
-        boundaries=boundaries,
+    boundary_map_md, report_md, passed = reporter.generate(
+        detection_result=detection_result,
         original_page_count=original_page_count,
-        compacted_page_estimate=compacted_page_estimate,
+        output_page_count=output_page_count,
         source_filename=source_filename,
         run_id=artifact_writer.run_id,
         grade=grade,
         subject=subject,
     )
+    artifact_writer.write("source-boundary-map.md", boundary_map_md)
     artifact_writer.write("compaction-report.md", report_md)
 
     # ── Final result ──────────────────────────────────────────────────────────
     verdict = "PASS" if passed else "FAIL"
+    pages_saved = original_page_count - output_page_count
+    reduction = round((pages_saved / original_page_count) * 100, 1) if original_page_count else 0.0
+
     print(f"\n[MTS] Result: {verdict}")
-    print(f"[MTS] Original: {original_page_count} pages -> Compacted: ~{compacted_page_estimate} pages")
-    print(f"[MTS] Artifacts written to: {artifact_writer.run_path}")
-    print(f"[MTS] PDF: {pdf_output_path}")
+    print(
+        f"[MTS] {original_page_count} pages -> {output_page_count} pages "
+        f"({pages_saved} saved, {reduction}% reduction)"
+    )
+    print(f"[MTS] PDF:       {output_pdf_path}")
+    print(f"[MTS] Artifacts: {artifact_writer.run_path}")
 
     if not passed:
         print("[MTS] Review compaction-report.md for failure details.")
@@ -157,19 +132,14 @@ def run_generate_worksheet(request_path: Path) -> None:
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
-    """
-    Build the CLI argument parser for the MTS orchestrator.
-
-    Returns:
-        Configured ArgumentParser with subcommands for each pipeline mode.
-    """
+    """Build the CLI argument parser for the MTS orchestrator."""
     parser = argparse.ArgumentParser(
         description="MTS Pipeline Orchestrator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  python -m src.orchestrator compact_source "
-            "--pdf docs/strategy/flyers/exam.pdf --grade 8 --subject Math\n"
+            "--pdf docs/exams/exam.pdf --grade 8 --subject Math\n"
             "  python -m src.orchestrator generate_worksheet "
             "--request requests/worksheet-request.json\n"
         ),
@@ -177,25 +147,23 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
-    # ── compact_source subcommand ─────────────────────────────────────────────
     compact_parser = subparsers.add_parser(
         "compact_source",
-        help="Strip non-question content from a state exam PDF and compact for printing",
+        help="Compact a source worksheet PDF into a print-efficient PDF",
     )
     compact_parser.add_argument(
         "--pdf", type=Path, required=True,
-        help="Path to the input state exam PDF",
+        help="Path to the input source worksheet PDF",
     )
     compact_parser.add_argument(
         "--grade", type=int, required=True,
-        help="Grade level of the exam (e.g., 8)",
+        help="Grade level (e.g., 8)",
     )
     compact_parser.add_argument(
         "--subject", type=str, default="Math",
         help="Subject area (default: Math)",
     )
 
-    # ── generate_worksheet subcommand ─────────────────────────────────────────
     worksheet_parser = subparsers.add_parser(
         "generate_worksheet",
         help="Generate an MTS worksheet from a source document (Phase 3)",
@@ -209,9 +177,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """
-    Parse CLI arguments and dispatch to the appropriate pipeline mode.
-    """
+    """Parse CLI arguments and dispatch to the appropriate pipeline mode."""
     parser = build_argument_parser()
     args = parser.parse_args()
 
