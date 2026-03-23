@@ -21,6 +21,7 @@ from src.utils.artifact_writer import ArtifactWriter
 from src.utils.claude_client import ClaudeClient
 from src.utils.pdf_utils import extract_text_by_page, get_page_count
 from src.utils.markdown_utils import frontmatter, horizontal_rule
+from src.utils.pdf_renderer import render_markdown_to_pdf
 from src.config import LINES_PER_PAGE_ESTIMATE
 
 
@@ -107,7 +108,11 @@ def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
         + horizontal_rule()
         + "\n"
     )
-    artifact_writer.write("compacted-source.md", header + compacted_body)
+    compacted_md_content = header + compacted_body
+    artifact_writer.write("compacted-source.md", compacted_md_content)
+
+    pdf_output_path = artifact_writer.artifact_path("compacted-source.pdf")
+    render_markdown_to_pdf(compacted_md_content, pdf_output_path)
 
     # ── Step 5: Generate compaction report ───────────────────────────────────
     # Estimate compacted page count from line count and configured lines-per-page
@@ -128,10 +133,11 @@ def run_compact_source(pdf_path: Path, grade: int, subject: str) -> None:
     artifact_writer.write("compaction-report.md", report_md)
 
     # ── Final result ──────────────────────────────────────────────────────────
-    verdict = "✅ PASS" if passed else "❌ FAIL"
+    verdict = "PASS" if passed else "FAIL"
     print(f"\n[MTS] Result: {verdict}")
-    print(f"[MTS] Original: {original_page_count} pages → Compacted: ~{compacted_page_estimate} pages")
+    print(f"[MTS] Original: {original_page_count} pages -> Compacted: ~{compacted_page_estimate} pages")
     print(f"[MTS] Artifacts written to: {artifact_writer.run_path}")
+    print(f"[MTS] PDF: {pdf_output_path}")
 
     if not passed:
         print("[MTS] Review compaction-report.md for failure details.")

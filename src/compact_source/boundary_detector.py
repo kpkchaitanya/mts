@@ -23,13 +23,15 @@ from src.utils.pdf_utils import PageText, render_page_as_image
 # Patterns that specifically match the first question (number 1)
 FIRST_QUESTION_PATTERNS: list[str] = [
     r"^\s*1[\.\)]\s+\S",         # "1. text" or "1) text"
+    r"^\s*1\s+[A-Z]",            # "1 Which..." — STAAR/TEA format (bold number, space, capital)
     r"^\s*Question\s+1[\s\.\:]", # "Question 1" / "Question 1." / "Question 1:"
     r"^\s*QUESTION\s+1[\s\.\:]", # "QUESTION 1" (all-caps variant)
     r"^\s*Problem\s+1[\s\.\:]",  # "Problem 1" (some exams use this label)
 ]
 
-# Pattern matching any numbered question — used to find the last question
-ANY_QUESTION_PATTERN: str = r"^\s*(\d+)[\.\)]\s+\S"
+# Pattern matching any numbered question — used to find the last question.
+# Handles both "1. text" / "1) text" and STAAR "1 Which..." (space separator before capital).
+ANY_QUESTION_PATTERN: str = r"^\s*(\d+)(?:[\.\)]\s+|\s+[A-Z])\S*"
 
 
 # ─── Data Classes ─────────────────────────────────────────────────────────────

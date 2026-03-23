@@ -17,7 +17,8 @@ from src.utils.markdown_utils import frontmatter, horizontal_rule, section_heade
 
 # Pattern used to count numbered questions in the compacted markdown output.
 # Must be consistent with ANY_QUESTION_PATTERN in boundary_detector.py.
-QUESTION_COUNT_PATTERN: str = r"^\s*\d+[\.\)]\s+\S"
+# Handles both "1. text" / "1) text" and STAAR "1 Which..." (space before capital).
+QUESTION_COUNT_PATTERN: str = r"^\s*\d+(?:[\.\)]\s+|\s+[A-Z])\S*"
 
 
 class Reporter:
