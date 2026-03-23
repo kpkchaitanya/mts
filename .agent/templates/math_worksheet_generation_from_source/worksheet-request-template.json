@@ -1,0 +1,20 @@
+{
+  "subject": "Math",
+  "grade": null,
+  "topic": "",
+  "source_document": "",
+  "source_type": "textbook | notes | worksheet | curriculum",
+  "difficulty": "Easy | Medium | Hard | Mixed",
+  "question_count": null,
+  "transformation_mode": "extract | transform | enhance",
+  "question_distribution": {
+    "direct": null,
+    "variation": null,
+    "application": null,
+    "challenge": null
+  },
+  "include_answer_key": true,
+  "include_explanations": false,
+  "output_format": ["markdown"],
+  "special_instructions": ""
+}
