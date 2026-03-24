@@ -455,10 +455,15 @@ class BlockDetector:
                     tight_bottom_page = prelim_end_page
                     tight_bottom_y = prelim_end_y
 
-            # Clamp: BLOCK_BOTTOM_PADDING must not push the bottom past the next
-            # question's start on the same page — that would create a 4-pt region
-            # of overlap where the next question's text appears in this block's image.
-            if tight_bottom_page == prelim_end_page and tight_bottom_y > prelim_end_y:
+            # Clamp computed tight bottom so it never extends beyond the
+            # preliminary end (the next marker's top). This prevents overlapping
+            # blocks even when the last choice + padding would otherwise cross
+            # page boundaries into the next question's area.
+            if (
+                tight_bottom_page > prelim_end_page
+                or (tight_bottom_page == prelim_end_page and tight_bottom_y > prelim_end_y)
+            ):
+                tight_bottom_page = prelim_end_page
                 tight_bottom_y = prelim_end_y
 
             y_top = max(0.0, marker.y_top - BLOCK_TOP_PADDING)

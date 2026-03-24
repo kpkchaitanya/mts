@@ -133,7 +133,13 @@ def run_compact_source(
 
     # ── Step 3: Pack into output PDF ──────────────────────────────────────────
     print("[3/3] Packing blocks into output PDF...")
-    packer = PdfPacker(scale_factor=scale_factor, max_block_pages=max_block_pages)
+    # Enable layout logging into the run artifacts to debug overlaps
+    layout_log_path = artifact_writer.run_path / "pack_layouts.csv"
+    packer = PdfPacker(
+        scale_factor=scale_factor,
+        max_block_pages=max_block_pages,
+        layout_log_path=layout_log_path,
+    )
     output_pdf_path = artifact_writer.bin_path("compacted-source.pdf")
     output_page_count = packer.pack(extracted_blocks, output_pdf_path)
     print(f"      Output: {output_page_count} pages -> {output_pdf_path}")
@@ -222,6 +228,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "Example: --scale-factor 85 shrinks each block to 85%%."
         ),
     )
+    compact_parser.add_argument(
+        "--max-block-pages", type=int, default=None,
+        help=(
+            "Maximum number of output pages a single block may occupy before "
+            "being downscaled (default: DEFAULT_MAX_BLOCK_PAGES from config, 2)."
+        ),
+    )
+    compact_parser.add_argument(
+        "--problem-list", type=str, default="ALL",
+        help=(
+            "Filter which problems to include in the compacted output. "
+            "Values: ALL (default), ranges like '1-10', or comma lists like '1,3,5'."
+        ),
+    )
 
     worksheet_parser = subparsers.add_parser(
         "generate_worksheet",
@@ -246,6 +266,8 @@ def main() -> None:
             grade=args.grade,
             subject=args.subject,
             scale_factor=args.scale_factor,
+            max_block_pages=args.max_block_pages,
+            problem_list=args.problem_list,
         )
     elif args.mode == "generate_worksheet":
         run_generate_worksheet(request_path=args.request)
