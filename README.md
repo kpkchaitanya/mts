@@ -53,3 +53,10 @@ mts/
 4. Every run produces a trace and eval summary
 5. Correctness over creativity
 6. Source fidelity over hallucination
+
+---
+
+## Command Prompts
+
+- `prompts/compact_source_command.md` — run the compact source pipeline
+- `prompts/switch_git_identity_command.md` — switch global Git username/email using command parameters
