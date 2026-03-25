@@ -96,10 +96,22 @@ def run_switch_git_identity(account_name: str, properties_path: Path, dry_run: b
         ["git", "config", "--global", "user.email"],
         text=True,
     ).strip()
+    verification_lines = subprocess.check_output(
+        ["git", "config", "--global", "--list"],
+        text=True,
+    ).splitlines()
+    identity_lines = [
+        line
+        for line in verification_lines
+        if line.startswith("user.name=") or line.startswith("user.email=")
+    ]
 
     print("[MTS] Global Git identity updated successfully.")
     print(f"[MTS] user.name:  {configured_name}")
     print(f"[MTS] user.email: {configured_email}")
+    print("[MTS] Verification (from `git config --global --list`):")
+    for line in identity_lines:
+        print(f"[MTS]   {line}")
 
 
 def build_argument_parser() -> argparse.ArgumentParser:

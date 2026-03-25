@@ -1,4 +1,4 @@
-# compact_source_command.md
+# compact_source.prompt.md
 
 This document describes how to run the `compact_source` pipeline from the repository, how
 to perform visual comparisons against golden samples, how defects are logged, and an

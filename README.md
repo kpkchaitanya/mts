@@ -58,5 +58,5 @@ mts/
 
 ## Command Prompts
 
-- `prompts/compact_source_command.md` — run the compact source pipeline
-- `prompts/switch_git_identity_command.md` — switch global Git username/email using command parameters
+- `prompts/compact_source.prompt.md` — run the compact source pipeline
+- `prompts/switch_git_identity.prompt.md` — switch global Git username/email using command parameters

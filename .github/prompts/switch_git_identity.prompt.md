@@ -1,4 +1,4 @@
-# switch_git_identity_command.md
+# switch_git_identity.prompt.md
 
 This document defines the `/switch_git_identity` command to update global Git identity using an account name mapped in a separate `.properties` file.
 
