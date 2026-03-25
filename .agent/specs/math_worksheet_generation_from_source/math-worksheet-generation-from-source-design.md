@@ -1,7 +1,7 @@
 # math-worksheet-generation-from-source-design.md
 
 **Feature:** math_worksheet_generation_from_source
-**Version:** v2
+**Version:** v3
 **Status:** Active
 
 ---
@@ -23,6 +23,9 @@ This feature operates in two modes:
 - Claude API is used for AI reasoning in `generate_worksheet` — concept extraction, question generation, QA validation
 - Claude vision (or pdfplumber coordinates) used for question block boundary detection in `compact_source`
 - File-based artifact storage — consistent with `.agent/evals/runs/` pattern; no database needed at this stage
+- `pdf_packer.py` supports 1- and 2-column layout; scale is recalibrated to column width
+- `max_pages` drives auto-scale computation; adaptive per-column gap-fill keeps scale variance within 20–30% of base
+- Image mode is current default; text mode is a future extension point
 
 ### Why visual extraction for `compact_source`
 
@@ -74,19 +77,27 @@ page_renderer.py
 block_detector.py
   ├── Extract text + y-coordinates via pdfplumber
   ├── Locate question number markers (Q1 … Qn)
-  └── Compute bounding box (y-top, y-bottom) for each question block
-      (block = stem + diagram/graph + answer choices, indivisible)
+    └── Compute tight bounding box per block:
+                top    = question number y_top − BLOCK_TOP_PADDING
+                bottom = last answer choice y_bottom + BLOCK_BOTTOM_PADDING
+            (no page headers or footers included in any crop)
+        - If a block spans a page boundary, any trailing empty page-space or footer rows at the bottom of a slice must be detected and trimmed so the combined block image contains no large blank regions. Trimming should remove continuous near-white rows at slice bottoms while preserving all visual content (diagrams, answer choices, symbols).
     │
     ▼
 block_extractor.py
   └── Crop each question block region from rendered page images
-      (tight crop, zero padding added)
+      (tight crop: Q# top → last answer choice bottom)
+      - When combining multi-slice blocks, the extractor trims trailing whitespace/footer rows from slice bottoms so the final combined image is compact and free of large blank bands.
     │
     ▼
-pdf_packer.py
-  ├── Place blocks sequentially, top-to-bottom, zero gap between blocks
-  ├── Start new page when block would overflow
-  └── Blocks that exceed full page height → placed alone on their own page
+pdf_packer.py  ← redesigned
+    ├── Compute column_width (full content width if columns=1; half if columns=2)
+    ├── Implements multi-block gap-fill (bounded lookahead) and uniform column shrink to eliminate large leftover gaps: try pulling in a small set of next blocks by uniformly downscaling within the allowed tolerance; if that fails, attempt a uniform shrink of the current column to fill space before advancing.
+  ├── Compute base_scale from scale_factor and/or max_pages
+  ├── Place blocks left-column-first, top-to-bottom, then right column, then next page
+  ├── Zero gap between consecutive blocks within a column
+  ├── After each column closes: run gap-fill pass (see packing algorithm below)
+  └── Very tall blocks (> one column height): scale down to fit; never split
     │
     ▼
 reporter.py
@@ -94,9 +105,109 @@ reporter.py
     │
     ▼
 Artifacts: source-boundary-map.md | compacted-source.pdf | compaction-report.md
+    - Optional QA: `comparison_report.json` + per-page diff images when a golden sample is supplied. The comparator component is implemented in `compact_source/comparator.py` and performs pixel-based diffs and blank-band detection to aid human review.
 ```
 
 **What is intentionally absent:** no `stripper.py`, no `compactor.py`, no Markdown intermediate, no Pandoc. Text is never re-rendered.
+
+### Packing Algorithm (pdf_packer.py)
+
+#### 1. Scale Computation
+
+```
+column_width = (content_width - column_gap) / 2   if columns == 2
+             = content_width                        if columns == 1
+
+if max_pages is given:
+    target_area = max_pages × column_height × columns
+    auto_scale  = target_area / sum(block.total_height_pts for all blocks)
+else:
+    auto_scale  = None
+
+base_scale = min(scale_factor/100, auto_scale)  if both given
+           = scale_factor/100                    if only scale_factor
+           = auto_scale                          if only max_pages
+           = 1.0                                 if neither given
+
+# Never upscale beyond natural fit (block fills column width at 1.0)
+# natural_scale = column_width / block.source_width_pts  (per block)
+# effective_scale = min(base_scale, natural_scale)       (per block)
+```
+
+#### 2. Placement Loop
+
+```
+For each column slot on each page:
+    col_y = margin_top
+    column_blocks = []
+
+    For each block (in question order):
+        effective_scale = min(base_scale, column_width / block.source_width_pts)
+        scaled_h = block.total_height_pts × effective_scale
+
+        if scaled_h > column_height:
+            # Block taller than one full column — force-fit
+            effective_scale = column_height / block.total_height_pts
+            scaled_h = column_height
+
+        if col_y + scaled_h > column_bottom:
+            # Block won't fit — close this column, run gap-fill, advance
+            run_gap_fill(column_blocks, col_y, base_scale)
+            advance to next column (or new page if on last column)
+            col_y = margin_top
+            column_blocks = []
+
+        place block at (col_x, col_y) with size (scaled_w, scaled_h)
+        column_blocks.append(block)
+        col_y += scaled_h   # zero gap between blocks
+```
+
+#### 3. Gap-Fill Pass (per column, after closing)
+
+```
+gap = column_height - sum(scaled heights of column_blocks)
+
+GAP_THRESHOLD = 40 pts  (~5 text lines)
+MAX_SCALE_REDUCTION = 0.25  (25% below base_scale; configurable 20–30%)
+
+if gap > GAP_THRESHOLD and next_block exists:
+    # Try to pull in the next block by uniformly scaling down this column
+    total_h = sum(block.total_height_pts for block in column_blocks)
+    next_h  = next_block.total_height_pts
+    needed_scale = column_height / (total_h + next_h)
+
+    min_allowed_scale = base_scale × (1 - MAX_SCALE_REDUCTION)
+
+    if needed_scale >= min_allowed_scale:
+        # Within tolerance — re-scale all blocks in this column and pull in next block
+        rescale column_blocks to needed_scale
+        place next_block at new col_y with needed_scale
+        advance col_y; add next_block to column_blocks
+    else:
+        # Gap is too large to fill without over-shrinking — accept the gap
+        pass
+```
+
+#### 4. Two-Column Layout
+
+```
+Page layout:
+  ┌─────────────────────────────────┐
+  │ margin                          │
+  │  ┌──────────┐  gap ┌──────────┐ │
+  │  │  Col 0   │      │  Col 1   │ │
+  │  │  (left)  │      │ (right)  │ │
+  │  └──────────┘      └──────────┘ │
+  │ margin                          │
+  └─────────────────────────────────┘
+
+column_gap = 12 pts  (configurable)
+column_width = (content_width - column_gap) / 2
+col_x[0] = margin
+col_x[1] = margin + column_width + column_gap
+
+Advance order: Col 0 → Col 1 → new page Col 0 → Col 1 → …
+```
 
 ### `generate_worksheet` Pipeline
 
@@ -258,7 +369,12 @@ pytest>=8.0.0            # Testing
 | 6 | Claude vision optional in `compact_source` | Used only for ambiguous cases (e.g., question marker not detectable by text coords); pdfplumber handles the standard case |
 | 7 | File-based artifacts | Consistent with existing system; simple to inspect, debug, and trace |
 | 8 | Max 2 QA retries (`generate_worksheet`) | Spec mandates loopback; 2 retries before escalation balances quality and cost |
+| 9 | `max_pages` = total output page target | Drives auto-scale computation; `max_block_pages` (internal safety cap per block) is kept as a separate internal constant |
+| 10 | Columns=1 default, columns=2 optional | Single-column is the baseline; 2-column halves the column width and recalibrates scale accordingly |
+| 11 | Gap-fill tolerance = 20–30% below base scale | Prevents unreadable output while still eliminating large whitespace gaps; gap is accepted if next block would require over-shrinking beyond the tolerance |
+| 12 | Image mode is current default; text mode deferred | Text mode requires reliable math symbol extraction — not feasible until a later phase |
+| 13 | Tight crop: Q# top → last answer choice bottom | Source page headers and footers must never appear in a block crop; this is enforced in block_detector boundaries |
 
-**Open questions:**
-- Should the orchestrator be CLI-driven (`python orchestrator.py --mode compact_source --pdf path`) or API-driven?
-- What DPI should be used for page rendering? 150 DPI is the minimum for readability; 200–300 DPI gives sharper output at the cost of file size.
+**Resolved questions:**
+- Orchestrator is CLI-driven (`python -m src.orchestrator compact_source --pdf path --grade n ...`)
+- DPI: 150 DPI default (configurable via `PDF_RENDER_DPI` env var)

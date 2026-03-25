@@ -1,7 +1,7 @@
 # math-worksheet-generation-from-source-spec.md
 
 **Feature Name:** math_worksheet_generation_from_source
-**Version:** v5
+**Version:** v6
 **Status:** Active
 
 ---
@@ -63,9 +63,22 @@ Take a source worksheet PDF and produce a print-ready PDF that minimizes pages w
   "mode": "compact_source",
   "source_pdf": "file path or binary",
   "grade": "integer",
-  "subject": "string"
+  "subject": "string",
+  "scale_factor": "float (%, default 100)",
+  "max_pages": "integer (optional — target total output pages)",
+  "columns": "integer (1 or 2, default 1)",
+  "question_list": "string (ALL | ranges like '1-10' | comma list '1,3,5')"
 }
 ```
+
+### Packing Parameters
+
+| Parameter | Type | Default | Meaning |
+|-----------|------|---------|---------|
+| `scale_factor` | float (%) | 100 | Base scale applied to each block relative to its natural fit width for the column. 100 = block fills the column width. Values < 100 shrink blocks. |
+| `max_pages` | int | None | Target total output page count. When specified, the system auto-computes a base scale so all blocks fit within this many pages. If both `scale_factor` and `max_pages` are given, the more restrictive (smaller) scale is used. |
+| `columns` | 1 or 2 | 1 | Number of layout columns per page. When `columns=2`, each column occupies half the content width minus a small inter-column gap; block scale is recalibrated relative to the column width (not the full page width). |
+| `question_list` | string | ALL | Which questions to include. Supports `ALL`, ranges (`1-10`), and comma lists (`1,3,5`). Filtering occurs before packing. |
 
 ### Processing Pipeline (Strict)
 
@@ -76,9 +89,13 @@ Take a source worksheet PDF and produce a print-ready PDF that minimizes pages w
 #### Step 2 — Question Block Detection
 - Identify question block boundaries using a **hybrid approach**:
   - Extract text with positional coordinates (pdfplumber) to locate question number markers (e.g., "1.", "2.") and answer choice lines (A./B./C./D. or F./G./H./J.).
-  - **Top boundary** of each block: the y-coordinate of the question number marker, minus a small upward padding (to capture the number itself).
-  - **Bottom boundary** of each block: the y_bottom of the **last answer choice line** (e.g., the "D." or "J." line) detected within the block's span, plus a small downward padding. This is the definitive bottom — NOT the y-coordinate of the next question marker.
+  - **Top boundary** of each block: the y-coordinate of the question number marker, minus a small upward padding (to capture the number itself). This is the definitive top — the crop starts at the question number, never at the top of the source page.
+  - **Bottom boundary** of each block: the y_bottom of the **last answer choice line** (e.g., the "D." or "J." line) detected within the block's span, plus a small downward padding. This is the definitive bottom — NOT the y-coordinate of the next question marker, and never the bottom of the source page.
   - For the last question: bottom boundary = the y_bottom of its last answer choice, plus small padding.
+  - **Source page headers and footers are NEVER included in any block crop.** The crop is always from the question number top to the last answer choice bottom, regardless of whether the block spans one or multiple source pages.
+   - For the last question: bottom boundary = the y_bottom of its last answer choice, plus small padding.
+   - **Source page headers and footers are NEVER included in any block crop.** The crop is always from the question number top to the last answer choice bottom, regardless of whether the block spans one or multiple source pages.
+   - If a block spans a page boundary and the tail of one slice contains only empty page-space or a footer, the extractor must trim that trailing area so the combined block image contains no large blank regions or page footers. Crops should be tightened to remove continuous blank rows at slice bottoms while preserving all visual content of the question.
 - **Non-question marker filtering:** Number markers (e.g., "1." in a formula chart or numbered instruction list) that have no detectable answer choices (A/B/C/D) AND span more than MAX_QUESTION_SPAN_PAGES pages are discarded as non-question content before building blocks. This prevents intro/reference material from being treated as the first question.
 - Deduplication of question numbers occurs AFTER filtering, so a false-positive early marker does not prevent the real first question from being detected.
 - A **question block** includes: question stem, embedded diagram/graph/table, and all answer choices (A/B/C/D).
@@ -89,13 +106,42 @@ Take a source worksheet PDF and produce a print-ready PDF that minimizes pages w
 - The crop uses the tight boundaries from Step 2: small padding above the question number, bottom anchored to the last answer choice's y_bottom plus BLOCK_BOTTOM_PADDING.
 - No whitespace between the last answer choice and the next question is included in the crop.
 - No whitespace padding is added between blocks in the output.
+ - No whitespace between the last answer choice and the next question is included in the crop.
+ - No whitespace padding is added between blocks in the output. When a slice originally included extra empty space (e.g., because the question continues on the next page), that empty area must be trimmed so the extracted block image is as compact as possible.
 
 #### Step 4 — Block Packing (Visual Reflow)
-- Place extracted question blocks sequentially onto new PDF pages, top to bottom.
-- Blocks are placed **immediately after** the previous block — zero gap between them.
-- When a block would overflow the current page, start a new page.
-- A block that does not fit on a full page (very tall diagram question) is placed alone on its own page — **it is never cropped or split**.
-- Page margins: minimal (e.g., 0.25 in) to maximize content density.
+
+**Column layout:**
+- If `columns=1` (default): each block is placed across the full content width.
+- If `columns=2`: the content area is divided into two equal columns separated by a small inter-column gap. Blocks fill the left column top-to-bottom, then the right column, then advance to the next page. Block scale is recalibrated relative to the column width.
+
+**Base scale computation:**
+- If `max_pages` is given, compute `base_scale = (max_pages × content_height × columns) / total_block_height_sum`.
+- If `scale_factor` is also given, use the more restrictive (smaller) of the two.
+- All blocks are initially placed at this `base_scale`.
+
+**Placement:**
+- Blocks are placed immediately after the previous block — zero gap between them within a column.
+- When a block would overflow the remaining space in the current column, advance to the next column (or new page if on the last column).
+- A block whose scaled height exceeds one full column height is scaled down further until it fits on a single page — it is **never split**.
+
+**Adaptive per-page scale adjustment (gap elimination):**
+- After all blocks for a column are placed (i.e., the next block does not fit), measure the gap remaining at the bottom of the column.
+- **Gap threshold:** if gap > ~35–40 pts (approximately 5 text lines), trigger a gap-fill attempt.
+- Gap-fill: scale down all blocks in that column uniformly until the next block fits, OR until the scale would drop more than 20–30% below the base scale — whichever limit is hit first.
+  - If the next block fits within the tolerance: pull it in, re-close the column.
+  - If not: accept the gap (over-shrinking beyond tolerance is not allowed).
+- Blocks on different pages/columns may have slightly different effective scales (within the 20–30% tolerance). All blocks on the same column share one scale.
+**Adaptive per-page scale adjustment (gap elimination):**
+- After all blocks for a column are placed (i.e., the next block does not fit), measure the gap remaining at the bottom of the column.
+- **Gap threshold:** if gap > ~35–40 pts (approximately 5 text lines), trigger a gap-fill attempt.
+- Gap-fill now supports pulling multiple subsequent blocks (lookahead) into the current column when doing so allows a uniform downscale within the permitted tolerance. The packer will attempt a bounded lookahead (configurable) to find a small set of next blocks that, when included, permit a uniform scale that fits exactly into the column without leaving a large leftover gap.
+- Additionally, before advancing the column, the packer will attempt a uniform column shrink: reduce all blocks currently in the column (within the MAX_SCALE_REDUCTION tolerance) so the existing blocks exactly fill the column height — this eliminates large blank areas without pulling additional blocks when pulling is not feasible.
+- Gap-fill: scale down all blocks in that column uniformly until the next block(s) fit, OR until the scale would drop more than 20–30% below the base scale — whichever limit is hit first.
+  - If the next block(s) fit within the tolerance: pull them in, re-close the column.
+  - Otherwise, if a uniform shrink of only the current column is acceptable within tolerance, apply it and accept the column as full.
+  - If neither is possible without over-shrinking, accept the gap. The primary goal is to avoid leaving large blank/black areas in the output — so the algorithm prefers multi-block pull-in, then uniform shrink, then accepting small gaps.
+- Blocks on different pages/columns may have slightly different effective scales (within the 20–30% tolerance). All blocks on the same column share one scale.
 
 #### Step 5 — Output PDF Generation
 - Assemble packed blocks into a final PDF.
@@ -106,8 +152,14 @@ Take a source worksheet PDF and produce a print-ready PDF that minimizes pages w
 
 - A question block (stem + choices) is **never split across pages**.
 - All symbols, graphs, and diagrams are rendered identically to source — no re-interpretation.
-- Minimum block height is not compressed — blocks are cropped, not scaled down.
-- If scaling is needed to pack a very wide block: scale uniformly (maintain aspect ratio), minimum readable size.
+- Blocks are scaled uniformly (aspect ratio preserved) — never distorted.
+- Scale adjustments during gap-fill are capped at 20–30% below base scale to prevent unreadable output.
+- A very tall block that exceeds the full column height is scaled down to fit on one page — it is placed alone in its column slot, never split.
+
+### Rendering Modes (Future)
+
+- **Image mode** (current default): Each block is a pixel-faithful crop of the original rendered PDF page. No text is re-rendered. Math symbols, graphs, and diagrams appear identically to the source.
+- **Text mode** (future): Blocks are re-rendered from extracted text. Not implemented — tracked for future phases.
 
 ### Output Contract
 
@@ -130,6 +182,8 @@ Take a source worksheet PDF and produce a print-ready PDF that minimizes pages w
 - A diagram is detached from its question
 - Any block is scaled below readable size
 - Output is less readable than source
+- Source page headers or footers appear in any block crop
+- Block crop does not start at the question number or does not end at the last answer choice
 
 ### Artifacts Produced
 
@@ -164,6 +218,17 @@ The primary output. A PDF where:
 - Each page contains tightly packed question blocks cropped from the source.
 - No gaps between consecutive blocks.
 - All content (symbols, graphs, diagrams) is pixel-faithful to the original.
+
+#### `comparison_report.json` (optional QA)
+
+When a golden sample is available for the source (approved baseline output), the system MUST support a visual comparison step that:
+
+- Renders the golden PDF and the generated `compacted-source.pdf` at a configured DPI.
+- Computes per-page pixel diffs and flags pages exceeding a configurable diff ratio.
+- Detects large blank/empty bands introduced in the output (indicates packing regressions).
+- Writes `comparison_report.json` with a list of defects and per-page diff images for human review.
+
+This artifact is consumed by the QA workflow: defects are reviewed and either (a) fixed manually, or (b) queued for an automated agent-driven repair step after human approval.
 
 #### `compaction-report.md`
 

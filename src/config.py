@@ -72,6 +72,18 @@ BLOCK_SCALE_FACTOR: float = float(os.getenv("BLOCK_SCALE_FACTOR", "100"))
 # in the environment.
 DEFAULT_MAX_BLOCK_PAGES: int = int(os.getenv("DEFAULT_MAX_BLOCK_PAGES", "2"))
 
+# Gap (in PDF points) between the two columns in a 2-column layout.
+# 12 pts ≈ 1/6 inch, enough visual separation without wasting page width.
+COLUMN_GAP_PTS: float = float(os.getenv("COLUMN_GAP_PTS", "12.0"))
+
+# Remaining space in a column (in PDF points) that triggers a gap-fill attempt.
+# ~40 pts ≈ 5 text lines — worth pulling in the next block to avoid wasting space.
+GAP_THRESHOLD_PTS: float = float(os.getenv("GAP_THRESHOLD_PTS", "40.0"))
+
+# Maximum fractional downscale from base_scale allowed during gap-fill.
+# 0.25 means the packer will shrink blocks by at most 25% to pull in a next block.
+MAX_SCALE_REDUCTION: float = float(os.getenv("MAX_SCALE_REDUCTION", "0.25"))
+
 # ─── Pipeline Control ─────────────────────────────────────────────────────────
 
 # Maximum QA retry loops before escalating to a human reviewer
@@ -80,6 +92,24 @@ MAX_QA_RETRIES: int = int(os.getenv("MAX_QA_RETRIES", "2"))
 # Minimum confidence for text-based boundary detection (0.0–1.0).
 # Below this threshold, Claude vision is used as a fallback.
 BOUNDARY_DETECTION_MIN_CONFIDENCE: float = 0.7
+
+# ─── Comparator / Golden Sample Comparison ───────────────────────────────────
+# DPI used when rendering PDFs for visual comparison (may be higher for
+# more sensitive pixel diffs). Keep equal or higher than PDF_RENDER_DPI.
+COMPARATOR_RENDER_DPI: int = int(os.getenv("COMPARATOR_RENDER_DPI", str(PDF_RENDER_DPI)))
+
+# Per-pixel grayscale difference threshold (0-255) when computing diffs.
+# A pixel difference above this value counts as a changed pixel.
+DIFF_PIXEL_THRESHOLD: int = int(os.getenv("DIFF_PIXEL_THRESHOLD", "30"))
+
+# Fraction of pixels that must differ on a page to mark it as a defect
+# (e.g., 0.02 = 2%).
+DIFF_PAGE_RATIO_THRESHOLD: float = float(os.getenv("DIFF_PAGE_RATIO_THRESHOLD", "0.02"))
+
+# Largest allowed contiguous blank-band fraction on a page before flagging.
+# e.g., 0.20 means a continuous near-white vertical band >20% of page height
+# is considered a defect (helps catch large empty/black areas introduced by packing).
+BLANK_BAND_FRACTION_THRESHOLD: float = float(os.getenv("BLANK_BAND_FRACTION_THRESHOLD", "0.2"))
 
 # ─── Startup Validation ───────────────────────────────────────────────────────
 

@@ -1,0 +1,91 @@
+{
+  "golden_pages": 14,
+  "output_pages": 14,
+  "defect_count": 14,
+  "defects": [
+    {
+      "page": 1,
+      "diff_ratio": 0.12019156268568033,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_001_diff.png"
+    },
+    {
+      "page": 2,
+      "diff_ratio": 0.12235008912655972,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_002_diff.png"
+    },
+    {
+      "page": 3,
+      "diff_ratio": 0.09089815805109923,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_003_diff.png"
+    },
+    {
+      "page": 4,
+      "diff_ratio": 0.12287961972667855,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_004_diff.png"
+    },
+    {
+      "page": 5,
+      "diff_ratio": 0.10422578728461081,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_005_diff.png"
+    },
+    {
+      "page": 6,
+      "diff_ratio": 0.07934973262032086,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_006_diff.png"
+    },
+    {
+      "page": 7,
+      "diff_ratio": 0.14261580510992275,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_007_diff.png"
+    },
+    {
+      "page": 8,
+      "diff_ratio": 0.09767653000594177,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_008_diff.png"
+    },
+    {
+      "page": 9,
+      "diff_ratio": 0.05453547237076649,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_009_diff.png"
+    },
+    {
+      "page": 10,
+      "diff_ratio": 0.0775220439691028,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_010_diff.png"
+    },
+    {
+      "page": 11,
+      "diff_ratio": 0.05764848484848485,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_011_diff.png"
+    },
+    {
+      "page": 12,
+      "diff_ratio": 0.10884563279857397,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_012_diff.png"
+    },
+    {
+      "page": 13,
+      "diff_ratio": 0.060249079025549615,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_013_diff.png"
+    },
+    {
+      "page": 14,
+      "diff_ratio": 0.05473036244800951,
+      "type": "visual_diff",
+      "diff_image": "C:\\Users\\neeli\\Development\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260324_213449\\comparisons\\page_014_diff.png"
+    }
+  ]
+}

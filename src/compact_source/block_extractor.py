@@ -122,13 +122,86 @@ class BlockExtractor:
             Pixmap of the cropped region.
         """
         page = doc[page_slice.page_number]
+
+        # Initial clip for the full slice region
         clip = fitz.Rect(
             0,                    # x_left: start at page left edge
             page_slice.y_top,
             page.rect.width,      # x_right: full page width
             page_slice.y_bottom,
         )
-        return page.get_pixmap(matrix=matrix, clip=clip)
+
+        pm = page.get_pixmap(matrix=matrix, clip=clip)
+
+        # Detect and trim bottom-most blank rows (white/near-white) to
+        # avoid leaving large empty areas or page footers when a question
+        # continues on the next page. If blank rows are found, re-render
+        # the clip with a tightened bottom boundary in PDF points.
+        blank_rows = self._count_bottom_blank_rows(pm)
+        if blank_rows <= 0:
+            return pm
+
+        # Compute trimmed height in PDF points and clamp
+        trim_pts = (blank_rows * 72.0) / self._dpi
+        new_y_bottom = max(page_slice.y_top, page_slice.y_bottom - trim_pts)
+        if new_y_bottom >= page_slice.y_bottom:
+            return pm
+
+        tight_clip = fitz.Rect(0, page_slice.y_top, page.rect.width, new_y_bottom)
+        return page.get_pixmap(matrix=matrix, clip=tight_clip)
+
+    def _count_bottom_blank_rows(self, pixmap: fitz.Pixmap, threshold: int = 245, max_fraction: float = 0.5) -> int:
+        """
+        Count continuous blank (near-white) rows at the bottom of a pixmap.
+
+        A row is considered blank if every pixel in the row has all RGB
+        channels >= `threshold`. The function scans from the image bottom
+        upward until a non-blank row is found or `max_fraction` of the
+        image height is reached.
+        """
+        if pixmap is None or pixmap.width == 0 or pixmap.height == 0:
+            return 0
+
+        n = pixmap.n
+        w = pixmap.width
+        h = pixmap.height
+        row_stride = w * n
+        samples = pixmap.samples
+
+        # Limit to a reasonable portion of the page to avoid trimming large
+        # amounts by accident. Default max_fraction is conservative.
+        max_rows = int(h * max_fraction)
+        if max_rows <= 0:
+            return 0
+
+        blank_rows = 0
+        for row in range(h - 1, h - 1 - max_rows, -1):
+            start = row * row_stride
+            end = start + row_stride
+            row_bytes = samples[start:end]
+            # Treat pixel as white if all color channels >= threshold
+            is_blank = True
+            # iterate per-pixel
+            for px in range(0, len(row_bytes), n):
+                # check RGB channels only (ignore alpha if present)
+                if n >= 3:
+                    r = row_bytes[px]
+                    g = row_bytes[px + 1]
+                    b = row_bytes[px + 2]
+                else:
+                    # grayscale
+                    r = row_bytes[px]
+                    g = r
+                    b = r
+                if r < threshold or g < threshold or b < threshold:
+                    is_blank = False
+                    break
+            if is_blank:
+                blank_rows += 1
+            else:
+                break
+
+        return blank_rows
 
     # ── Combining ─────────────────────────────────────────────────────────────
 
@@ -155,19 +228,23 @@ class BlockExtractor:
         if len(pixmaps) == 1:
             pm = pixmaps[0]
             width_pts = pm.width * 72.0 / self._dpi
-            height_pts = slices[0].height
+            # Derive height in PDF points from the rendered pixmap so any
+            # trimming applied in _crop_slice is accurately reflected.
+            height_pts = pm.height * 72.0 / self._dpi
             return pm.tobytes("png"), width_pts, height_pts
 
         # Multi-slice: stack vertically via a temporary in-memory PDF
-        total_height_pts = sum(s.height for s in slices)
+        # Use the actual rendered pixmap heights (converted to PDF points)
+        # to respect any per-slice trimming performed above.
+        heights_pts = [pm.height * 72.0 / self._dpi for pm in pixmaps]
+        total_height_pts = sum(heights_pts)
         width_pts = pixmaps[0].width * 72.0 / self._dpi
 
         tmp_doc = fitz.open()
         page = tmp_doc.new_page(width=width_pts, height=total_height_pts)
 
         y_pts = 0.0
-        for pm, slc in zip(pixmaps, slices):
-            h_pts = slc.height
+        for pm, h_pts in zip(pixmaps, heights_pts):
             page.insert_image(fitz.Rect(0, y_pts, width_pts, y_pts + h_pts), pixmap=pm)
             y_pts += h_pts
 

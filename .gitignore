@@ -1,2 +1,7 @@
 .claude/
 .env
+
+# Python bytecode cache
+bin/
+**/__pycache__/
+**/*.pyc
