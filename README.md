@@ -1,5 +1,6 @@
 # MTS — Master Tuition Services - Making Academic Teaching more enjoyable, effective, and thoughtful!
 
+
 **Project:** Masters Tuition Services
 **Tagline:** "Making Academic Tuition More Enjoyable, Effective, & Very Affordable"
 **Purpose:** Build an AI-native system that supports MTS teachers in delivering high-quality, curriculum-aligned education to students in Grades 2–10. The system automates content generation (worksheets, answer keys, lesson plans) so that teachers can focus on judgment, connection, and care — while every output upholds the MTS standard: correct, clear, and student-first.
