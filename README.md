@@ -1,4 +1,4 @@
-# MTS — AI-Native Agentic System
+# MTS — Master Tuition Services - Making Academic Teaching more enjoyable, effective, and thoughtful!
 
 **Project:** Masters Tuition Services
 **Tagline:** "Making Academic Tuition More Enjoyable, Effective, & Very Affordable"
