@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20260427_053606",
+  "feature": "compact_source",
+  "source_file": "2022-staar-5-math-test.pdf",
+  "source_path": "C:\\Users\\neeli\\kpkDevelopment\\mts\\docs\\exams\\2026-mid-term\\2022-staar-5-math-test.pdf",
+  "timestamp_utc": "2026-04-27T09:36:24.073001Z",
+  "parameters": {
+    "grade": 3,
+    "subject": "Math",
+    "scale_factor": 100.0,
+    "max_pages": null,
+    "columns": 1,
+    "max_block_pages": 2,
+    "problem_list": "ALL"
+  },
+  "stages": {
+    "block_detection": {
+      "total_questions": 36,
+      "used_vision_fallback": false
+    },
+    "block_extraction": {
+      "extracted_blocks": 36
+    },
+    "pdf_packing": {
+      "output_page_count": 14
+    },
+    "reporting": {
+      "passed": true
+    }
+  },
+  "source_stats": {
+    "page_count": 36,
+    "size_bytes": 583287
+  },
+  "output_stats": {
+    "page_count": 14,
+    "size_bytes": 1225075,
+    "pages_saved": 22,
+    "size_bytes_saved": -641788
+  },
+  "summary": {
+    "verdict": "PASS"
+  },
+  "defects": [
+    {
+      "stage": "reporting",
+      "severity": "info",
+      "code": "OUTPUT_LARGER_THAN_SOURCE",
+      "message": "Output PDF is larger than source \u2014 raster images inflated file size.",
+      "context": {
+        "source_bytes": 583287,
+        "output_bytes": 1225075
+      }
+    }
+  ],
+  "timings": {
+    "total_duration_s": 5.894,
+    "stage_breakdown": {
+      "block_detection": 3.801,
+      "block_extraction": 0.792,
+      "pdf_packing": 0.669,
+      "reporting": 0.002
+    }
+  }
+}

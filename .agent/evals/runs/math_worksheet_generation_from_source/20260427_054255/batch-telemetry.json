@@ -1,0 +1,196 @@
+{
+  "run_id": "20260427_054255",
+  "total_files": 3,
+  "passed": 3,
+  "defects": 0,
+  "failed": 0,
+  "runs": [
+    {
+      "schema_version": "1.0",
+      "run_id": "20260427_054255",
+      "feature": "compact_source",
+      "source_file": "gr_3_math_released_in_spring_2014.pdf",
+      "source_path": "C:\\Users\\neeli\\kpkDevelopment\\mts\\docs\\exams\\2026-EOGs\\gr_3_math_released_in_spring_2014.pdf",
+      "timestamp_utc": "2026-04-27T09:42:55.374507Z",
+      "parameters": {
+        "grade": 3,
+        "subject": "Math",
+        "scale_factor": 100.0,
+        "max_pages": null,
+        "columns": 2,
+        "max_block_pages": 2,
+        "problem_list": "ALL"
+      },
+      "stages": {
+        "block_detection": {
+          "total_questions": 40,
+          "used_vision_fallback": false
+        },
+        "block_extraction": {
+          "extracted_blocks": 40
+        },
+        "pdf_packing": {
+          "output_page_count": 5
+        },
+        "reporting": {
+          "passed": true
+        }
+      },
+      "source_stats": {
+        "page_count": 54,
+        "size_bytes": 2398535
+      },
+      "output_stats": {
+        "page_count": 5,
+        "size_bytes": 2839905,
+        "pages_saved": 49,
+        "size_bytes_saved": -441370
+      },
+      "summary": {
+        "verdict": "PASS"
+      },
+      "defects": [
+        {
+          "stage": "reporting",
+          "severity": "info",
+          "code": "OUTPUT_LARGER_THAN_SOURCE",
+          "message": "Output PDF is larger than source \u2014 raster images inflated file size.",
+          "context": {
+            "source_bytes": 2398535,
+            "output_bytes": 2839905
+          }
+        }
+      ],
+      "timings": {
+        "total_duration_s": 4.584,
+        "stage_breakdown": {
+          "block_detection": 0.587,
+          "block_extraction": 1.856,
+          "pdf_packing": 1.444,
+          "reporting": 0.005
+        }
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "run_id": "20260427_054255",
+      "feature": "compact_source",
+      "source_file": "gr_4_math_released_in_spring_2014.pdf",
+      "source_path": "C:\\Users\\neeli\\kpkDevelopment\\mts\\docs\\exams\\2026-EOGs\\gr_4_math_released_in_spring_2014.pdf",
+      "timestamp_utc": "2026-04-27T09:42:59.964686Z",
+      "parameters": {
+        "grade": 3,
+        "subject": "Math",
+        "scale_factor": 100.0,
+        "max_pages": null,
+        "columns": 2,
+        "max_block_pages": 2,
+        "problem_list": "ALL"
+      },
+      "stages": {
+        "block_detection": {
+          "total_questions": 50,
+          "used_vision_fallback": false
+        },
+        "block_extraction": {
+          "extracted_blocks": 50
+        },
+        "pdf_packing": {
+          "output_page_count": 7
+        },
+        "reporting": {
+          "passed": true
+        }
+      },
+      "source_stats": {
+        "page_count": 65,
+        "size_bytes": 2429793
+      },
+      "output_stats": {
+        "page_count": 7,
+        "size_bytes": 2419344,
+        "pages_saved": 58,
+        "size_bytes_saved": 10449
+      },
+      "summary": {
+        "verdict": "PASS"
+      },
+      "defects": [],
+      "timings": {
+        "total_duration_s": 4.859,
+        "stage_breakdown": {
+          "block_detection": 0.687,
+          "block_extraction": 2.011,
+          "pdf_packing": 1.533,
+          "reporting": 0.002
+        }
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "run_id": "20260427_054255",
+      "feature": "compact_source",
+      "source_file": "gr_5_math_released_in_spring_2014.pdf",
+      "source_path": "C:\\Users\\neeli\\kpkDevelopment\\mts\\docs\\exams\\2026-EOGs\\gr_5_math_released_in_spring_2014.pdf",
+      "timestamp_utc": "2026-04-27T09:43:04.827883Z",
+      "parameters": {
+        "grade": 3,
+        "subject": "Math",
+        "scale_factor": 100.0,
+        "max_pages": null,
+        "columns": 2,
+        "max_block_pages": 2,
+        "problem_list": "ALL"
+      },
+      "stages": {
+        "block_detection": {
+          "total_questions": 50,
+          "used_vision_fallback": false
+        },
+        "block_extraction": {
+          "extracted_blocks": 50
+        },
+        "pdf_packing": {
+          "output_page_count": 7
+        },
+        "reporting": {
+          "passed": true
+        }
+      },
+      "source_stats": {
+        "page_count": 65,
+        "size_bytes": 2651100
+      },
+      "output_stats": {
+        "page_count": 7,
+        "size_bytes": 2898326,
+        "pages_saved": 58,
+        "size_bytes_saved": -247226
+      },
+      "summary": {
+        "verdict": "PASS"
+      },
+      "defects": [
+        {
+          "stage": "reporting",
+          "severity": "info",
+          "code": "OUTPUT_LARGER_THAN_SOURCE",
+          "message": "Output PDF is larger than source \u2014 raster images inflated file size.",
+          "context": {
+            "source_bytes": 2651100,
+            "output_bytes": 2898326
+          }
+        }
+      ],
+      "timings": {
+        "total_duration_s": 5.395,
+        "stage_breakdown": {
+          "block_detection": 0.801,
+          "block_extraction": 2.222,
+          "pdf_packing": 1.67,
+          "reporting": 0.004
+        }
+      }
+    }
+  ]
+}

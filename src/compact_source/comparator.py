@@ -76,6 +76,125 @@ def _detect_blank_band(img: Image.Image) -> float:
     return float(max_run) / float(h)
 
 
+_SEVERITY_CRITICAL = "Critical"
+_SEVERITY_HIGH     = "High"
+_SEVERITY_MEDIUM   = "Medium"
+_SEVERITY_LOW      = "Low"
+
+_PRIORITY_P1 = "P1"
+_PRIORITY_P2 = "P2"
+_PRIORITY_P3 = "P3"
+_PRIORITY_P4 = "P4"
+
+
+def _classify_visual_diff(ratio: float) -> tuple[str, str, str]:
+    """Return (severity, priority, description) for a visual_diff defect."""
+    pct = round(ratio * 100, 1)
+    if ratio >= 0.20:
+        return (
+            _SEVERITY_CRITICAL, _PRIORITY_P1,
+            f"Severe layout deviation on this page — {pct}% of pixels differ from the golden sample. "
+            "Content may be shifted, clipped, or missing entirely.",
+        )
+    if ratio >= 0.10:
+        return (
+            _SEVERITY_HIGH, _PRIORITY_P2,
+            f"Significant visual difference on this page — {pct}% of pixels differ. "
+            "Question blocks, spacing, or images likely misaligned relative to the golden.",
+        )
+    if ratio >= 0.05:
+        return (
+            _SEVERITY_MEDIUM, _PRIORITY_P3,
+            f"Moderate visual difference on this page — {pct}% of pixels differ. "
+            "Minor layout shift or scaling variance detected.",
+        )
+    return (
+        _SEVERITY_LOW, _PRIORITY_P4,
+        f"Minor visual difference on this page — {pct}% of pixels differ. "
+        "Likely a sub-pixel rendering or anti-aliasing artefact.",
+    )
+
+
+def _build_defect(
+    defect_id: str,
+    defect_type: str,
+    page: int | None,
+    severity: str,
+    priority: str,
+    description: str,
+    extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    d: dict[str, Any] = {
+        "id": defect_id,
+        "type": defect_type,
+        "severity": severity,
+        "priority": priority,
+        "description": description,
+    }
+    if page is not None:
+        d["page"] = page
+    if extras:
+        d.update(extras)
+    return d
+
+
+def _write_markdown_report(
+    report_dir: Path,
+    golden_pdf: Path,
+    output_pdf: Path,
+    pages_g: int,
+    pages_o: int,
+    defects: list[dict[str, Any]],
+) -> None:
+    """Write a Jira-style markdown defect table to defects.md."""
+    lines: list[str] = []
+    lines.append(f"# Defect Report — {output_pdf.stem}")
+    lines.append("")
+    lines.append(f"| | |")
+    lines.append(f"|---|---|")
+    lines.append(f"| **Golden** | `{golden_pdf.name}` ({pages_g} pages) |")
+    lines.append(f"| **Output** | `{output_pdf.name}` ({pages_o} pages) |")
+    lines.append(f"| **Total defects** | {len(defects)} |")
+    lines.append("")
+
+    if not defects:
+        lines.append("✅ No defects found.")
+    else:
+        lines.append("| ID | Page | Type | Severity | Priority | Description |")
+        lines.append("|---|---|---|---|---|---|")
+        for d in defects:
+            page_str = str(d.get("page", "—"))
+            lines.append(
+                f"| {d['id']} "
+                f"| {page_str} "
+                f"| `{d['type']}` "
+                f"| **{d['severity']}** "
+                f"| {d['priority']} "
+                f"| {d['description']} |"
+            )
+
+        # Diff images section
+        vis_defects = [d for d in defects if d.get("diff_image")]
+        if vis_defects:
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+            lines.append("## Diff Images")
+            lines.append("")
+            for d in vis_defects:
+                img_path = Path(d["diff_image"])
+                rel = img_path.name
+                lines.append(f"### {d['id']} — Page {d['page']} ({d['severity']} / {d['priority']})")
+                lines.append("")
+                lines.append(f"_{d['description']}_")
+                lines.append("")
+                lines.append(f"![{rel}]({rel})")
+                lines.append("")
+
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / "defects.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 def compare_pdfs(
     golden_pdf: Path,
     output_pdf: Path,
@@ -96,9 +215,29 @@ def compare_pdfs(
     pages_o = len(doc_o)
 
     defects: list[dict[str, Any]] = []
+    seq = 0
+
+    def _next_id() -> str:
+        nonlocal seq
+        seq += 1
+        return f"DEF-{seq:03d}"
 
     if pages_g != pages_o:
-        defects.append({"type": "page_count_mismatch", "golden_pages": pages_g, "output_pages": pages_o})
+        delta = pages_o - pages_g
+        direction = "more" if delta > 0 else "fewer"
+        defects.append(_build_defect(
+            defect_id=_next_id(),
+            defect_type="page_count_mismatch",
+            page=None,
+            severity=_SEVERITY_HIGH,
+            priority=_PRIORITY_P2,
+            description=(
+                f"Output has {abs(delta)} {direction} page(s) than the golden sample "
+                f"({pages_o} vs {pages_g}). This indicates blocks were split differently "
+                "or extra/missing content pages were produced."
+            ),
+            extras={"golden_pages": pages_g, "output_pages": pages_o},
+        ))
 
     pages = min(pages_g, pages_o)
     for i in range(pages):
@@ -106,31 +245,56 @@ def compare_pdfs(
         img_o = _render_page_to_pil(doc_o, i, dpi)
 
         diff_arr, ratio = _compute_diff(img_g, img_o)
-        page_defects: dict[str, Any] = {"page": i + 1, "diff_ratio": ratio}
 
         if ratio > DIFF_PAGE_RATIO_THRESHOLD:
-            # Save diff visualization
             diff_vis = Image.fromarray(diff_arr).convert("L")
             diff_path = report_dir / f"page_{i+1:03d}_diff.png"
             diff_vis.save(diff_path)
-            page_defects["type"] = "visual_diff"
-            page_defects["diff_image"] = str(diff_path)
-            defects.append(page_defects)
+            severity, priority, description = _classify_visual_diff(ratio)
+            defects.append(_build_defect(
+                defect_id=_next_id(),
+                defect_type="visual_diff",
+                page=i + 1,
+                severity=severity,
+                priority=priority,
+                description=description,
+                extras={"diff_ratio": ratio, "diff_image": str(diff_path)},
+            ))
             continue
 
-        # check for large blank bands in the output (indicates wasted space)
         blank_frac = _detect_blank_band(img_o)
         if blank_frac >= BLANK_BAND_FRACTION_THRESHOLD:
-            page_defects["type"] = "large_blank_band"
-            page_defects["blank_band_fraction"] = blank_frac
-            defects.append(page_defects)
+            defects.append(_build_defect(
+                defect_id=_next_id(),
+                defect_type="large_blank_band",
+                page=i + 1,
+                severity=_SEVERITY_MEDIUM,
+                priority=_PRIORITY_P3,
+                description=(
+                    f"Output page has a large blank band occupying {round(blank_frac * 100, 1)}% "
+                    "of the page height. Indicates inefficient packing or a missed block."
+                ),
+                extras={"blank_band_fraction": blank_frac},
+            ))
 
-    # If output has extra pages beyond golden, flag them
     if pages_o > pages_g:
         for i in range(pages_g, pages_o):
             img_o = _render_page_to_pil(doc_o, i, dpi)
             blank_frac = _detect_blank_band(img_o)
-            defects.append({"page": i + 1, "type": "extra_output_page", "blank_band_fraction": blank_frac})
+            is_blank = blank_frac >= 0.95
+            defects.append(_build_defect(
+                defect_id=_next_id(),
+                defect_type="extra_output_page",
+                page=i + 1,
+                severity=_SEVERITY_HIGH,
+                priority=_PRIORITY_P2,
+                description=(
+                    f"Output contains an extra page (page {i+1}) not present in the golden sample. "
+                    + ("Page appears to be entirely blank — likely a packing overflow." if is_blank
+                       else f"Page is {round(blank_frac * 100, 1)}% blank — partial overflow or orphaned block.")
+                ),
+                extras={"blank_band_fraction": blank_frac},
+            ))
 
     summary = {
         "golden_pages": pages_g,
@@ -139,10 +303,11 @@ def compare_pdfs(
         "defects": defects,
     }
 
-    # write JSON report
     report_path = report_dir / "comparison_report.json"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
+
+    _write_markdown_report(report_dir, golden_pdf, output_pdf, pages_g, pages_o, defects)
 
     doc_g.close()
     doc_o.close()

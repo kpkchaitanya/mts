@@ -564,7 +564,7 @@ class PdfPacker:
             self._write_layout_log(layout)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        doc.save(str(output_path))
+        doc.save(str(output_path), deflate=True, garbage=4)
         page_count = len(doc)
         doc.close()
         return page_count

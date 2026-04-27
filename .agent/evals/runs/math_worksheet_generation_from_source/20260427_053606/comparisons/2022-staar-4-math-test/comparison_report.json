@@ -1,0 +1,137 @@
+{
+  "golden_pages": 13,
+  "output_pages": 13,
+  "defect_count": 13,
+  "defects": [
+    {
+      "id": "DEF-001",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 9.0% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 1,
+      "diff_ratio": 0.08982286096256685,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_001_diff.png"
+    },
+    {
+      "id": "DEF-002",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 8.8% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 2,
+      "diff_ratio": 0.08783956290849673,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_002_diff.png"
+    },
+    {
+      "id": "DEF-003",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 5.7% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 3,
+      "diff_ratio": 0.057172134952465835,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_003_diff.png"
+    },
+    {
+      "id": "DEF-004",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 9.9% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 4,
+      "diff_ratio": 0.09884112262329174,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_004_diff.png"
+    },
+    {
+      "id": "DEF-005",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 7.6% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 5,
+      "diff_ratio": 0.07551270981877599,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_005_diff.png"
+    },
+    {
+      "id": "DEF-006",
+      "type": "visual_diff",
+      "severity": "High",
+      "priority": "P2",
+      "description": "Significant visual difference on this page \u2014 10.3% of pixels differ. Question blocks, spacing, or images likely misaligned relative to the golden.",
+      "page": 6,
+      "diff_ratio": 0.10312917780748664,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_006_diff.png"
+    },
+    {
+      "id": "DEF-007",
+      "type": "visual_diff",
+      "severity": "High",
+      "priority": "P2",
+      "description": "Significant visual difference on this page \u2014 14.3% of pixels differ. Question blocks, spacing, or images likely misaligned relative to the golden.",
+      "page": 7,
+      "diff_ratio": 0.14291815210932857,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_007_diff.png"
+    },
+    {
+      "id": "DEF-008",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 6.0% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 8,
+      "diff_ratio": 0.060428503787878785,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_008_diff.png"
+    },
+    {
+      "id": "DEF-009",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 5.9% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 9,
+      "diff_ratio": 0.0593585208704694,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_009_diff.png"
+    },
+    {
+      "id": "DEF-010",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 8.5% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 10,
+      "diff_ratio": 0.08525860628342247,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_010_diff.png"
+    },
+    {
+      "id": "DEF-011",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 8.6% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 11,
+      "diff_ratio": 0.08616147690136661,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_011_diff.png"
+    },
+    {
+      "id": "DEF-012",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 6.0% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 12,
+      "diff_ratio": 0.059532596182412356,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_012_diff.png"
+    },
+    {
+      "id": "DEF-013",
+      "type": "visual_diff",
+      "severity": "Medium",
+      "priority": "P3",
+      "description": "Moderate visual difference on this page \u2014 5.5% of pixels differ. Minor layout shift or scaling variance detected.",
+      "page": 13,
+      "diff_ratio": 0.05497298351158645,
+      "diff_image": "C:\\Users\\neeli\\kpkDevelopment\\mts\\.agent\\evals\\runs\\math_worksheet_generation_from_source\\20260427_053606\\comparisons\\2022-staar-4-math-test\\page_013_diff.png"
+    }
+  ]
+}

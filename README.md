@@ -45,6 +45,67 @@ mts/
 
 ---
 
+## Usage
+
+### Source PDFs
+
+Place source worksheet PDFs in `docs/exams/` before running any pipeline command.
+
+### compact_source
+
+Compacts a source worksheet PDF into a print-efficient output PDF. All question blocks are extracted as images — math symbols, graphs, and diagrams are preserved exactly as they appear in the source.
+
+**Basic usage** (run from the project root):
+
+```bash
+python -m src.orchestrator compact_source --pdf docs/exams/<filename>.pdf --grade <n> --subject Math
+```
+
+**All options:**
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--pdf` | ✅ | Path to a source worksheet PDF, or a **folder** to compact all PDFs inside it |
+| `--grade` | | Grade level (e.g. `3`, `8`) — label in reports only (default: `0`) |
+| `--subject` | | Subject area (default: `Math`) — label in reports only |
+| `--scale-factor` | | Block size as % of content width (e.g. `85` → 85%) |
+| `--max-pages` | | Target maximum number of output pages |
+| `--columns` | | Output columns: `1` (default) or `2` |
+| `--problem-list` | | Problems to include: `ALL` (default), `1-10`, or `1,3,5` |
+| `--compare` | | Run visual comparison against a golden sample |
+| `--golden` | | Path to the golden sample PDF (required with `--compare`) |
+
+**Examples:**
+
+```bash
+# Compact a single file
+python -m src.orchestrator compact_source --pdf docs/exams/2022-staar-5-math-test.pdf
+
+# Compact all PDFs in a folder
+python -m src.orchestrator compact_source --pdf docs/exams/2026-mid-term
+
+# Compact problems 1–10 at 85% scale in 2 columns
+python -m src.orchestrator compact_source --pdf docs/exams/2022-staar-5-math-test.pdf --problem-list 1-10 --scale-factor 85 --columns 2
+
+# Compact and compare against a golden sample
+python -m src.orchestrator compact_source --pdf docs/exams/2022-staar-5-math-test.pdf --compare --golden docs/exams/golden-staar-5.pdf
+```
+
+**Outputs** are written to `.agent/evals/runs/math_worksheet_generation_from_source/<run_id>/`:
+
+| File | Description |
+|------|-------------|
+| `compacted-source.pdf` | The output PDF |
+| `compaction-report.md` | Pass/fail summary and page reduction stats |
+| `source-boundary-map.md` | Detected question block boundaries |
+| `pack_layouts.csv` | Per-block layout trace (for debugging) |
+
+### Slash Command
+
+In VS Code Copilot Chat, type `/compact_source` to be guided interactively through building and running the command.
+
+---
+
 ## Guiding Principles
 
 1. Spec first — always define the contract before building

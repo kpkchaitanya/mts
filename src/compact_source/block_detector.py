@@ -82,6 +82,23 @@ LINE_Y_TOLERANCE: float = 3.0
 # numbered reference entries (unit conversions, numbered instructions, etc.).
 MIN_QUESTION_HEIGHT_PTS: float = 80.0
 
+# ─── Format Auto-detection ────────────────────────────────────────────────────
+
+# Number of content pages sampled to classify PDF format.
+IMAGE_HEAVY_SAMPLE_PAGES: int = 10
+
+# If the sampled content pages average fewer than this many words, the PDF is
+# classified as image-heavy (one visual question per page, e.g. EOG format).
+# STAAR pages average 50-200 words; EOG question pages average ~3 words.
+IMAGE_HEAVY_AVG_WORDS_THRESHOLD: int = 10
+
+# A content page is counted as image-heavy if it has at most this many words.
+# EOG question pages carry just "N of 40" (3 words) as a footer.
+# Section-break notices like "The first section of the test ends here." have
+# 8 words and must be excluded. Setting the cap to 5 separates question pages
+# from all non-question low-text pages.
+IMAGE_HEAVY_PAGE_MAX_WORDS: int = 5
+
 
 # ─── Data Classes ─────────────────────────────────────────────────────────────
 
@@ -181,6 +198,14 @@ class BlockDetector:
         """
         Detect all question blocks in the source PDF.
 
+        Auto-detects the PDF format by sampling word counts from the first
+        content pages:
+          - text_rich (STAAR-style): multiple questions per page with extractable
+            text → existing text/vision detection pipeline.
+          - image_heavy (EOG-style): one visual question per page with almost no
+            extractable text → full-page block per content page, stopping at
+            any detectable answer key section.
+
         Args:
             pdf_path: Path to the source worksheet PDF.
 
@@ -192,6 +217,11 @@ class BlockDetector:
                 detected markers are filtered as non-question content.
         """
         page_heights, page_widths = self._get_page_geometry(pdf_path)
+
+        # Auto-detect format before running text-based detection
+        fmt = self._classify_format(pdf_path)
+        if fmt == "image_heavy":
+            return self._detect_image_heavy_blocks(pdf_path, page_heights, page_widths)
 
         # All markers, not yet deduplicated — dedup happens after validation
         all_markers = self._find_all_question_markers(pdf_path)
@@ -225,6 +255,90 @@ class BlockDetector:
             page_heights=page_heights,
             page_widths=page_widths,
             used_vision_fallback=used_vision,
+        )
+
+    # ── Format Classification ─────────────────────────────────────────────────
+
+    def _classify_format(self, pdf_path: Path) -> str:
+        """
+        Classify the PDF as 'text_rich' or 'image_heavy' by sampling content pages.
+
+        Samples up to IMAGE_HEAVY_SAMPLE_PAGES pages starting at MIN_CONTENT_PAGE.
+        If the average word count across sampled pages is below
+        IMAGE_HEAVY_AVG_WORDS_THRESHOLD, the format is 'image_heavy'.
+
+        Returns:
+            'image_heavy' or 'text_rich'
+        """
+        total_words = 0
+        pages_sampled = 0
+        with pdfplumber.open(pdf_path) as pdf:
+            sample_end = min(MIN_CONTENT_PAGE + IMAGE_HEAVY_SAMPLE_PAGES, len(pdf.pages))
+            for page_idx in range(MIN_CONTENT_PAGE, sample_end):
+                total_words += len(pdf.pages[page_idx].extract_words())
+                pages_sampled += 1
+        if pages_sampled == 0:
+            return "text_rich"
+        avg = total_words / pages_sampled
+        return "image_heavy" if avg < IMAGE_HEAVY_AVG_WORDS_THRESHOLD else "text_rich"
+
+    def _find_answer_key_fence(self, pdf_path: Path, total_pages: int) -> int:
+        """
+        Return the zero-based page index of the first answer key page.
+
+        Scans every page for co-occurrence of the words 'answer' and 'key'
+        (case-insensitive). Returns total_pages if no answer key is found.
+        """
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_idx in range(total_pages):
+                words = {w["text"].lower() for w in pdf.pages[page_idx].extract_words()}
+                if "answer" in words and "key" in words:
+                    return page_idx
+        return total_pages
+
+    def _detect_image_heavy_blocks(self, pdf_path: Path, page_heights: list[float], page_widths: list[float]) -> BlockDetectionResult:
+        """
+        Build one full-page block per content page for image-heavy PDFs (EOG style).
+
+        Content pages are those between MIN_CONTENT_PAGE and the answer key fence
+        whose word count is at or below IMAGE_HEAVY_PAGE_MAX_WORDS. Each such page
+        becomes one QuestionBlock containing the full visible area of the page.
+
+        The answer key section (and any appendix after it) is excluded entirely.
+        """
+        total_pages = len(page_heights)
+        fence = self._find_answer_key_fence(pdf_path, total_pages)
+        blocks: list[QuestionBlock] = []
+        question_number = 1
+
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_idx in range(MIN_CONTENT_PAGE, fence):
+                word_count = len(pdf.pages[page_idx].extract_words())
+                if 0 < word_count <= IMAGE_HEAVY_PAGE_MAX_WORDS:
+                    slices = [PageSlice(
+                        page_number=page_idx,
+                        y_top=0.0,
+                        y_bottom=page_heights[page_idx],
+                    )]
+                    blocks.append(QuestionBlock(
+                        question_number=question_number,
+                        slices=slices,
+                        text_preview=f"(image-based question {question_number})",
+                    ))
+                    question_number += 1
+
+        if not blocks:
+            raise BlockDetectionError(
+                f"No image-based content pages found in '{pdf_path.name}'. "
+                "All content pages exceed the image-heavy word threshold."
+            )
+
+        return BlockDetectionResult(
+            blocks=blocks,
+            total_questions=len(blocks),
+            page_heights=page_heights,
+            page_widths=page_widths,
+            used_vision_fallback=False,
         )
 
     # ── Geometry ──────────────────────────────────────────────────────────────

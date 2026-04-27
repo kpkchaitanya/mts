@@ -30,6 +30,8 @@ class Reporter:
         run_id: str,
         grade: int,
         subject: str,
+        original_size_bytes: int = 0,
+        output_size_bytes: int = 0,
     ) -> tuple[str, str, bool]:
         """
         Generate both report artifacts.
@@ -59,6 +61,8 @@ class Reporter:
             detection_result=detection_result,
             original_page_count=original_page_count,
             output_page_count=output_page_count,
+            original_size_bytes=original_size_bytes,
+            output_size_bytes=output_size_bytes,
             source_filename=source_filename,
             run_id=run_id,
             grade=grade,
@@ -137,6 +141,8 @@ class Reporter:
         run_id: str,
         grade: int,
         subject: str,
+        original_size_bytes: int = 0,
+        output_size_bytes: int = 0,
     ) -> tuple[str, bool]:
         questions_detected = detection_result.total_questions
         pages_saved = original_page_count - output_page_count
@@ -145,6 +151,18 @@ class Reporter:
             if original_page_count > 0
             else 0.0
         )
+
+        def _fmt_size(b: int) -> str:
+            if b >= 1_048_576:
+                return f"{b / 1_048_576:.1f} MB"
+            return f"{b / 1024:.0f} KB"
+
+        size_delta = original_size_bytes - output_size_bytes
+        size_pct = round(abs(size_delta) / original_size_bytes * 100, 1) if original_size_bytes > 0 else 0.0
+        if size_delta >= 0:
+            size_delta_label = f"{_fmt_size(size_delta)} saved ({size_pct}% reduction)"
+        else:
+            size_delta_label = f"{_fmt_size(abs(size_delta))} larger (raster images, +{size_pct}%)"
 
         # Integrity: must have detected at least one block
         integrity_pass = questions_detected > 0
@@ -162,8 +180,10 @@ class Reporter:
             "|--------|-------|",
             f"| Original Pages | {original_page_count} |",
             f"| Compacted Pages | {output_page_count} |",
-            f"| Pages Saved | {pages_saved} |",
-            f"| Reduction | {reduction_percent}% |",
+            f"| Pages Saved | {pages_saved} ({reduction_percent}%) |",
+            f"| Original Size | {_fmt_size(original_size_bytes)} |",
+            f"| Compacted Size | {_fmt_size(output_size_bytes)} |",
+            f"| Size Delta | {size_delta_label} |",
             horizontal_rule(),
             section_header("Question Integrity Check"),
             "",

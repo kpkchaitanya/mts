@@ -32,9 +32,11 @@ FEATURE_NAME: str = "math_worksheet_generation_from_source"
 
 # ─── PDF Processing ───────────────────────────────────────────────────────────
 
-# DPI for rendering PDF pages as images when using Claude vision
-# 150 DPI balances legibility with file size for API calls
-PDF_RENDER_DPI: int = int(os.getenv("PDF_RENDER_DPI", "150"))
+# DPI for rendering PDF pages as images for block extraction and Claude vision.
+# 96 DPI produces 817×1057 px on a letter page — crisp enough for classroom
+# printing while keeping output PDF file sizes reasonable (~35% smaller than 150 DPI).
+# Override with PDF_RENDER_DPI env var if higher fidelity is needed.
+PDF_RENDER_DPI: int = int(os.getenv("PDF_RENDER_DPI", "96"))
 
 # Pages before this zero-based index are skipped during boundary search.
 # State exams always have at least one cover/instruction page before Q1.
