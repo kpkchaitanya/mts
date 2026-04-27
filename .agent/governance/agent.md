@@ -165,8 +165,8 @@ if page_number < 2:
   """
   boundary_detector.py
 
-  Locates the first and last question boundaries in a state exam PDF.
-  This is Step 1 of the compact_source pipeline.
+  Locates the first and last question boundaries in a source exam PDF.
+  This is Step 1 of the block detection pipeline.
 
   Inputs:  Raw PDF file path
   Outputs: (first_question_location, last_question_location) as named tuples
@@ -175,7 +175,164 @@ if page_number < 2:
 
 ---
 
-## 5. Quality Bar
+## 5. Hierarchical Change Protocol (Coding Agent)
+
+Every non-trivial code change — bug fix, enhancement, or refactor — MUST follow this
+four-stage sequence. **No stage may be skipped. A human gate separates each stage.**
+
+```
+INTENT → DESIGN → IMPLEMENTATION → OBSERVATION & VALIDATION
+   ↑         ↑            ↑                    ↑
+ human     human        human               human
+  gate      gate         gate                gate
+```
+
+### Mapping to the AI-First SDLC Loop
+
+This protocol is how a single change moves through the MTS SDLC. See `program.md §AI-First SDLC`
+for the full loop definition. The stage mapping is:
+
+```
+SDLC:    Observe/Heal  →  Spec     →   Build    →   Run → Eval → Learn
+         (trigger)        (design)     (code)        (validate)
+Protocol: Stage 1      →  Stage 2  →   Stage 3  →   Stage 4
+```
+
+A change is triggered by the **Observe** or **Heal** phase (a defect found in a run, or
+an eval score below threshold). It feeds back into **Spec** before any **Build** work
+begins. The cycle closes when **Learn** records the outcome in `learnings.md`.
+
+### Extended Authority Chain (from program.md)
+
+```
+Soul → Constitution → PRD → Spec → Eval → Build → Run → Observe → Learn → Heal
+```
+
+- A spec cannot contradict the PRD. A build cannot contradict the spec.
+- An eval failure blocks a run from being marked PASS.
+- P1/P2 bugs block new feature work until resolved.
+- Only humans close bugs — agents may only set status to `fix-applied`.
+
+---
+
+### Stage 1 — Intent  *(maps to: Observe / Heal → trigger)*
+
+The agent states:
+- **What** is wrong or missing (symptom with evidence — screenshot, log, artifact path,
+  eval dimension that failed).
+- **Why** it matters (user or student impact).
+- **Scope** — what is in and explicitly out of scope.
+
+**Artifact actions:**
+- Bug fix → open (or reference an existing) entry in `.agent/bugs/bugs.md` with status `open`.
+- Enhancement / tech debt → open (or reference) an entry in `.agent/improvements/backlog.md`.
+- Every change must trace to one of these two files before design starts.
+
+> **Human gate:** human confirms intent is correctly understood.
+
+---
+
+### Stage 2 — Design  *(maps to: Spec)*
+
+Before writing any code, the agent produces:
+- **Root cause** — the exact file(s), class(es), method(s), and logic responsible.
+- **Proposed change** — what changes, where, and why.
+- **Decision tree / logic** — all branching behavior documented explicitly.
+- **Interfaces touched** — classes, methods, constants, and files that change.
+- **Interface stability** — what does NOT change (callers, data classes, public contracts).
+- **Harness impact** — which harness layers (see `program.md §Harness Engineering`) are
+  affected: tests that must be added/updated, eval dimensions that this fix addresses,
+  logging or telemetry changes needed.
+- **Test plan** — specific unit and integration cases with inputs and expected outputs,
+  mapped to the harness test suite (`pytest`).
+
+**Spec artifact actions — update in this authority order:**
+
+| File | Role | When to update |
+|---|---|---|
+| `<feature>-prd.md` | Product requirements and user stories | Only if a product requirement or user story changes |
+| `<feature>-spec.md` | Behavioral contract (inputs, outputs, stage behavior, error handling) | If the contract governing the affected behavior changes |
+| `<feature>-design.md` | Living implementation record | Always — the design section for the affected stage must reflect the approved new logic |
+
+The agent drafts the proposed diffs to these files as part of the design presentation.
+No file is updated until the human approves the design.
+
+> **Human gate:** human approves the design, spec diffs, and test plan before any code is written.
+> Clarifying questions → revise design and re-present. Do NOT write code.
+
+---
+
+### Stage 3 — Implementation  *(maps to: Build)*
+
+- Implement exactly what was approved in Stage 2. No scope creep.
+- Follow all coding standards in Section 4.
+- Add or update tests per the approved test plan — harness coverage must not regress.
+
+**Doc-sync is non-negotiable and part of implementation — not a follow-up step:**
+The spec and design documents are the authoritative record of how the system works.
+Code that is not reflected in the docs is incomplete, regardless of whether it runs correctly.
+The agent MUST update these files in the same step as the code change, in authority order:
+
+| File | Rule |
+|---|---|
+| `<feature>-design.md` | **Always update.** Every code change to pipeline logic MUST be reflected in the affected stage's section and flowchart. If the design doc does not match the code, the implementation is not done. |
+| `<feature>-spec.md` | Update if the behavioral contract changed (inputs, outputs, stage behavior, error handling, testable claims). |
+| `<feature>-prd.md` | Update only if a product requirement or user story changed. |
+
+The agent does not wait to be asked. Updating the docs is as much a deliverable as the code itself.
+
+- Update `.agent/bugs/bugs.md` or `.agent/improvements/backlog.md`: advance status to `fix-applied`.
+- If a significant architectural or approach decision was made, record it in
+  `.agent/memory/decisions.md`.
+- Leave a verification instruction in the bug/improvement entry:
+  - Exact command to run.
+  - Which eval quality dimensions (from `program.md §Eval Quality Dimensions`) to check.
+  - Expected output artifacts in `.agent/evals/runs/<feature>/<run-id>/`.
+
+> **Human gate:** human reviews all changes (code + updated `.md` files) before running anything.
+
+---
+
+### Stage 4 — Observation & Validation  *(maps to: Run → Eval → Learn)*
+
+- Human runs the pipeline against a real input; output artifacts land in
+  `.agent/evals/runs/<feature>/<run-id>/` (exact files defined in the feature spec).
+- Validation is evaluated against the **Eval Quality Dimensions** in `program.md` — not
+  just visual inspection. The agent must call out which dimensions are addressed by this fix.
+- The coding agent may NOT declare the bug resolved.
+- Only after the human confirms the output is correct:
+  - Human advances status `fix-applied` → `resolved` in `bugs.md` (human action only).
+  - Agent adds an entry to `.agent/memory/learnings.md`: what was learned, what was
+    updated, linked to run ID and bug/improvement ID, which eval dimension improved.
+  - If the eval in `.agent/evals/<feature>/` needs updating to catch this class of defect
+    in future, agent drafts that update for human review.
+
+> **Human gate:** human confirms resolution. Agent records in `learnings.md`.
+
+---
+
+### Authority chain for this protocol
+
+```
+soul.md → constitution.md → program.md → agent.md (this doc) → spec → workflow → agent → output
+```
+
+Within Stage 2, the spec artifact authority chain is:
+```
+<feature>-prd.md → <feature>-spec.md → <feature>-design.md
+```
+Lower files must never contradict higher files. If they conflict, the higher file wins
+and the agent must resolve the contradiction before proceeding.
+
+### Violations
+
+If a coding agent writes code before receiving design approval, edits a spec without
+human approval, or advances a stage without a human gate — that is a **protocol
+violation**. The human may reject the change and require a restart from Stage 1.
+
+---
+
+## 6. Quality Bar  
 
 Before any output — code or artifact — is considered complete, the agent must be able to answer YES to all of these:
 
@@ -189,9 +346,9 @@ If any answer is NO, the output is not complete.
 
 ---
 
-## 6. Bug and Improvement Logging (Coding Agent)
+## 7. Bug and Improvement Logging (Coding Agent)
 
-### 6.1 When to Log a Bug
+### 7.1 When to Log a Bug
 
 Log a bug in `.agent/bugs/bugs.md` when:
 - Code produces incorrect output (wrong calculation, broken crop, malformed artifact)
@@ -201,14 +358,14 @@ Log a bug in `.agent/bugs/bugs.md` when:
 
 Do not wait for a second occurrence. Log on first observation.
 
-### 6.2 When to Log an Improvement
+### 7.2 When to Log an Improvement
 
 Log an improvement in `.agent/improvements/backlog.md` when:
 - A repeated pattern of weak-but-passing output suggests a spec gap
 - A new requirement emerges from teacher or student feedback
 - A pipeline step is identified as inefficient or fragile
 
-### 6.3 What Makes a Good Bug Entry
+### 7.3 What Makes a Good Bug Entry
 
 A bug entry must include enough information to reproduce and diagnose the issue without re-running the system from scratch:
 
@@ -218,7 +375,7 @@ A bug entry must include enough information to reproduce and diagnose the issue 
 - **Actual output** — what actually happened (quote or reference the artifact)
 - **Root cause layer** — spec · agent logic · code · external library
 
-### 6.4 Linking Bugs to Specs
+### 7.4 Linking Bugs to Specs
 
 Every P1 and P2 bug must result in one of:
 - A spec update (if the spec was ambiguous or missing a constraint)
@@ -227,7 +384,7 @@ Every P1 and P2 bug must result in one of:
 
 The bug entry must reference what was updated and where.
 
-### 6.5 Bug Lifecycle — Who Can Close a Bug
+### 7.5 Bug Lifecycle — Who Can Close a Bug
 
 **A coding agent may NEVER mark a bug as `resolved`.**
 

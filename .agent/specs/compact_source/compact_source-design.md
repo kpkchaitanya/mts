@@ -111,11 +111,12 @@ flowchart TD
     C -->|No — STAAR-style| TR[Format: text_rich]
 
     IH --> IH1[_find_answer_key_fence\nscan pages for 'answer' + 'key'\nreturn first matching page index]
-    IH1 --> IH2[_detect_image_heavy_blocks\niterate pages 0 → fence-1]
+    IH1 --> IH2[_detect_image_heavy_blocks\niterate pages 0 → fence-1\nfitz doc open alongside pdfplumber]
     IH2 --> IH3{0 < word_count\n<= 5?\nIMAGE_HEAVY_PAGE_MAX_WORDS}
-    IH3 -->|Yes| IH4[Include as block\none full-page QuestionBlock]
+    IH3 -->|Yes| IH4[_find_image_heavy_y_bottom\nmax y1 across:\ntext blocks + embedded images\n+ drawings via PyMuPDF\n+ BLOCK_BOTTOM_PADDING]
+    IH4 --> IH4B[QuestionBlock\ny_top=0.0\ny_bottom=content bottom]
     IH3 -->|No — blank or section break| IH5[Skip page]
-    IH4 --> IH6([BlockDetectionResult])
+    IH4B --> IH6([BlockDetectionResult])
     IH5 --> IH2
 
     TR --> TR1[Scan every page with pdfplumber\nextract word bounding boxes]
@@ -135,6 +136,33 @@ flowchart TD
     style IH fill:#e8f4f8,stroke:#4a9eca
     style TR fill:#fef9e7,stroke:#f0c040
 ```
+
+---
+
+## 2a. Shared Utility — `src/utils/image_utils.py`
+
+This module provides pixel-level blank-row analysis for block images. It is shared between `block_extractor.py` (trim blank rows during crop) and `reporter.py` (measure whitespace efficiency for reporting).
+
+### Key functions
+
+| Function | Purpose |
+|----------|---------|
+| `count_bottom_blank_rows(png_bytes)` | Decode PNG bytes via `fitz.Pixmap`, delegate to `_count_blank_rows_from_pixmap`. Used when only bytes are available. |
+| `blank_bottom_fraction(png_bytes)` | Return `blank_rows / total_height` as a float in `[0, max_fraction]`. Retained for image_utils pixel-level analysis. |
+| `count_bottom_blank_rows_from_pixmap(pixmap)` | Caller already holds a `fitz.Pixmap` (block_extractor pixel-trimmer). Avoids re-decode. |
+| `_count_blank_rows_from_pixmap(pm, threshold, max_fraction)` | Core loop: walks rows from bottom; stops when a non-near-white pixel is found or `max_fraction` rows scanned. |
+
+**Blank pixel definition**: all RGB channels ≥ `threshold` (default 245).
+
+**`max_fraction` cap** (default 0.5): prevents classifying a legitimately sparse page as fully blank.
+
+### Block Height Efficiency Check Stage (reporter.py `_build_whitespace_section`)
+
+After all blocks are extracted, `reporter.py` iterates each `ExtractedBlock` and measures `total_height_pts / page_height`. Any block ≥ `IMAGE_HEAVY_HEIGHT_WARN_FRACTION` (default 95%) is flagged with `⚠ OVERSIZED`. If any blocks are flagged the overall report verdict is FAIL.
+
+This check runs on **post-extractor heights** (after the pixel-trimmer has removed blank rows), so it accurately reflects what was actually packed into the output PDF. A regression back to the pre-fix `y_bottom = page_height` would cause all blocks to report near-100% height and fail the check.
+
+**Why 95% and not a lower threshold:** EOG question content legitimately fills between 46% and 93.5% of the page (large diagram questions fill most of the available space above the footer). A threshold below 95% would produce false positives.
 
 ---
 
@@ -164,9 +192,16 @@ flowchart TD
 
     subgraph PHASE2["Phase 2 — render()"]
         R1[Create fitz.Document\nadd blank pages] --> R2
-        R2[For each _PlacedBlock\ninsert PNG at computed rect] --> R3
+        R2[For each _PlacedBlock\ninsert PNG at computed rect] --> R2a
+        R2a{add_question_numbers?}
+        R2a -->|Yes| R2b[draw white bg rect\ninsert_text label\n'N.' at top-left\noverlay=True]
+        R2a -->|No| R3
+        R2b --> R3
         R3[doc.save\ndeflate=True\ngarbage=4]
     end
+
+    R3 --> NOTE1
+    NOTE1["`question_start` shifts sequence\n`--no-question-numbers` suppresses\nauto-enabled for is_image_heavy"]
 
     R3 --> OUT([Output PDF\noutput_page_count])
 

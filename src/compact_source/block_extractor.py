@@ -21,6 +21,7 @@ import fitz  # PyMuPDF
 
 from src.compact_source.block_detector import QuestionBlock, PageSlice
 from src.config import PDF_RENDER_DPI
+from src.utils.image_utils import count_bottom_blank_rows_from_pixmap
 
 
 # ─── Data Classes ─────────────────────────────────────────────────────────────
@@ -137,7 +138,7 @@ class BlockExtractor:
         # avoid leaving large empty areas or page footers when a question
         # continues on the next page. If blank rows are found, re-render
         # the clip with a tightened bottom boundary in PDF points.
-        blank_rows = self._count_bottom_blank_rows(pm)
+        blank_rows = count_bottom_blank_rows_from_pixmap(pm)
         if blank_rows <= 0:
             return pm
 
@@ -149,59 +150,6 @@ class BlockExtractor:
 
         tight_clip = fitz.Rect(0, page_slice.y_top, page.rect.width, new_y_bottom)
         return page.get_pixmap(matrix=matrix, clip=tight_clip)
-
-    def _count_bottom_blank_rows(self, pixmap: fitz.Pixmap, threshold: int = 245, max_fraction: float = 0.5) -> int:
-        """
-        Count continuous blank (near-white) rows at the bottom of a pixmap.
-
-        A row is considered blank if every pixel in the row has all RGB
-        channels >= `threshold`. The function scans from the image bottom
-        upward until a non-blank row is found or `max_fraction` of the
-        image height is reached.
-        """
-        if pixmap is None or pixmap.width == 0 or pixmap.height == 0:
-            return 0
-
-        n = pixmap.n
-        w = pixmap.width
-        h = pixmap.height
-        row_stride = w * n
-        samples = pixmap.samples
-
-        # Limit to a reasonable portion of the page to avoid trimming large
-        # amounts by accident. Default max_fraction is conservative.
-        max_rows = int(h * max_fraction)
-        if max_rows <= 0:
-            return 0
-
-        blank_rows = 0
-        for row in range(h - 1, h - 1 - max_rows, -1):
-            start = row * row_stride
-            end = start + row_stride
-            row_bytes = samples[start:end]
-            # Treat pixel as white if all color channels >= threshold
-            is_blank = True
-            # iterate per-pixel
-            for px in range(0, len(row_bytes), n):
-                # check RGB channels only (ignore alpha if present)
-                if n >= 3:
-                    r = row_bytes[px]
-                    g = row_bytes[px + 1]
-                    b = row_bytes[px + 2]
-                else:
-                    # grayscale
-                    r = row_bytes[px]
-                    g = r
-                    b = r
-                if r < threshold or g < threshold or b < threshold:
-                    is_blank = False
-                    break
-            if is_blank:
-                blank_rows += 1
-            else:
-                break
-
-        return blank_rows
 
     # ── Combining ─────────────────────────────────────────────────────────────
 

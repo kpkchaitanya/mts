@@ -37,6 +37,7 @@ from src.config import (
     OUTPUT_PAGE_HEIGHT_PTS,
     OUTPUT_PAGE_MARGIN_PTS,
     OUTPUT_PAGE_WIDTH_PTS,
+    QUESTION_LABEL_FONT_SIZE,
 )
 
 
@@ -82,6 +83,8 @@ class PdfPacker:
         columns: int = 1,
         max_block_pages: int = 2,
         layout_log_path: Optional[Path] = None,
+        add_question_numbers: bool = False,
+        question_start: int = 1,
     ) -> None:
         self._page_w = page_width
         self._page_h = page_height
@@ -89,6 +92,8 @@ class PdfPacker:
         self._columns = max(1, int(columns))
         self._max_block_pages = max(1, int(max_block_pages))
         self._layout_log_path = Path(layout_log_path) if layout_log_path is not None else None
+        self._add_question_numbers = add_question_numbers
+        self._question_start = max(1, int(question_start))
 
         # Content area dimensions
         self._content_w = page_width - 2 * margin
@@ -559,6 +564,24 @@ class PdfPacker:
             page = doc[pb.page_index]
             rect = fitz.Rect(pb.x, pb.y, pb.x + pb.w, pb.y + pb.h)
             page.insert_image(rect, stream=pb.block.png_bytes)
+
+            if self._add_question_numbers:
+                display_num = self._question_start + (pb.block.question_number - 1)
+                label = f"{display_num}."
+                font_size = QUESTION_LABEL_FONT_SIZE
+                # White background rectangle behind label for legibility over image
+                bg_w = font_size * 0.65 * len(label) + 6.0
+                bg_h = font_size + 4.0
+                bg_rect = fitz.Rect(pb.x, pb.y, pb.x + bg_w, pb.y + bg_h)
+                page.draw_rect(bg_rect, color=None, fill=(1.0, 1.0, 1.0), overlay=True)
+                # Baseline of text: top of block + font_size + small top padding
+                page.insert_text(
+                    (pb.x + 3.0, pb.y + font_size + 2.0),
+                    label,
+                    fontsize=font_size,
+                    color=(0.0, 0.0, 0.0),
+                    overlay=True,
+                )
 
         if self._layout_log_path:
             self._write_layout_log(layout)

@@ -97,6 +97,8 @@ def run_compact_source(
     golden: Path | None = None,
     artifact_writer: ArtifactWriter | None = None,
     setup_logging: bool = True,
+    add_question_numbers: bool | None = None,
+    question_start: int = 1,
 ) -> RunTelemetry:
     """
     Execute the full compact_source pipeline for a given source worksheet PDF.
@@ -163,6 +165,8 @@ def run_compact_source(
             "columns": columns,
             "max_block_pages": max_block_pages,
             "problem_list": problem_list or "ALL",
+            "add_question_numbers": add_question_numbers,
+            "question_start": question_start,
         },
     )
 
@@ -228,6 +232,7 @@ def run_compact_source(
             page_heights=detection_result.page_heights,
             page_widths=detection_result.page_widths,
             used_vision_fallback=detection_result.used_vision_fallback,
+            is_image_heavy=detection_result.is_image_heavy,
         )
         tel.timings.record("block_detection", time.perf_counter() - t1)
 
@@ -270,12 +275,20 @@ def run_compact_source(
         logger.info("[3/4] Packing blocks into output PDF...")
         t3 = time.perf_counter()
         layout_log_path = artifact_writer.run_path / f"{pdf_path.stem}_pack_layouts.csv"
+        # Auto-enable question number labels for image-heavy PDFs (e.g. EOG) where
+        # the number was embedded in the footer and is removed by the crop operation.
+        # The caller can override by passing add_question_numbers explicitly.
+        add_question_numbers_effective = add_question_numbers
+        if add_question_numbers_effective is None:
+            add_question_numbers_effective = detection_result.is_image_heavy
         packer = PdfPacker(
             scale_factor=scale_factor,
             max_pages=max_pages,
             columns=columns,
             max_block_pages=max_block_pages,
             layout_log_path=layout_log_path,
+            add_question_numbers=add_question_numbers_effective,
+            question_start=question_start,
         )
         output_pdf_path = artifact_writer.bin_path(
             f"{pdf_path.stem}_Compacted_{columns}col_{artifact_writer.run_id}.pdf"
@@ -300,6 +313,7 @@ def run_compact_source(
             run_id=artifact_writer.run_id,
             grade=grade,
             subject=subject,
+            extracted_blocks=extracted_blocks,
         )
         artifact_writer.write(f"{pdf_path.stem}_source-boundary-map.md", boundary_map_md)
         artifact_writer.write(f"{pdf_path.stem}_compaction-report.md", report_md)
@@ -487,6 +501,23 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     compact_parser.add_argument(
+        "--no-question-numbers", action="store_true",
+        help=(
+            "Suppress automatic question number labels. "
+            "By default, labels are added for image-heavy PDFs (e.g. EOG) "
+            "where the question number was embedded in the footer and is removed by the crop."
+        ),
+    )
+    compact_parser.add_argument(
+        "--question-start", type=int, default=1,
+        help=(
+            "Starting question number for the label sequence (default: 1). "
+            "Use this when the exam numbering begins at a value other than 1, "
+            "or when running --problem-list on a subset and you want the labels "
+            "to reflect the original exam numbers rather than the detected sequence."
+        ),
+    )
+    compact_parser.add_argument(
         "--compare", action="store_true",
         help="Run visual comparison against a golden sample after packing (requires --golden or --golden-dir).",
     )
@@ -568,6 +599,8 @@ def main() -> None:
                             golden=per_file_golden,
                             artifact_writer=shared_writer,
                             setup_logging=False,
+                            add_question_numbers=False if args.no_question_numbers else None,
+                            question_start=args.question_start,
                         )
                         results.append((pdf_file.name, "PASS", time.perf_counter() - file_start))
                         telemetry_records.append(tel.to_dict())
@@ -671,6 +704,8 @@ def main() -> None:
                 problem_list=args.problem_list,
                 compare=args.compare,
                 golden=args.golden,
+                add_question_numbers=False if args.no_question_numbers else None,
+                question_start=args.question_start,
             )
     elif args.mode == "generate_worksheet":
         run_generate_worksheet(request_path=args.request)

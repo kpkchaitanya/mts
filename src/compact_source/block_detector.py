@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 import pdfplumber
+import fitz  # PyMuPDF — used in _detect_image_heavy_blocks for content bbox queries
 
 from src.config import (
     MAX_QUESTION_SPAN_PAGES,
@@ -99,6 +100,16 @@ IMAGE_HEAVY_AVG_WORDS_THRESHOLD: int = 10
 # from all non-question low-text pages.
 IMAGE_HEAVY_PAGE_MAX_WORDS: int = 5
 
+# Regex that matches a page-number footer of the form "N of M"
+# (e.g. "1 of 40", "12 of 50").  Used to exclude the footer from content-bbox
+# calculations so it does not anchor y_bottom back to the bottom of the page.
+IMAGE_HEAVY_FOOTER_PATTERN: re.Pattern = re.compile(r"^\d+\s+of\s+\d+$", re.IGNORECASE)
+
+# The footer is expected to sit within this fraction of page height from the
+# bottom (default 15 %).  A text block matches the footer exclusion rule only
+# when it is BOTH inside this zone AND matches IMAGE_HEAVY_FOOTER_PATTERN.
+IMAGE_HEAVY_FOOTER_ZONE_FRACTION: float = 0.15
+
 
 # ─── Data Classes ─────────────────────────────────────────────────────────────
 
@@ -149,6 +160,7 @@ class BlockDetectionResult:
     page_heights: list[float]   # Height of each source page in PDF points
     page_widths: list[float]    # Width of each source page in PDF points
     used_vision_fallback: bool
+    is_image_heavy: bool = False  # True when PDF was classified as image-heavy (EOG style)
 
 
 @dataclass
@@ -312,20 +324,32 @@ class BlockDetector:
         question_number = 1
 
         with pdfplumber.open(pdf_path) as pdf:
-            for page_idx in range(MIN_CONTENT_PAGE, fence):
-                word_count = len(pdf.pages[page_idx].extract_words())
-                if 0 < word_count <= IMAGE_HEAVY_PAGE_MAX_WORDS:
-                    slices = [PageSlice(
-                        page_number=page_idx,
-                        y_top=0.0,
-                        y_bottom=page_heights[page_idx],
-                    )]
-                    blocks.append(QuestionBlock(
-                        question_number=question_number,
-                        slices=slices,
-                        text_preview=f"(image-based question {question_number})",
-                    ))
-                    question_number += 1
+            fitz_doc = fitz.open(str(pdf_path))
+            try:
+                for page_idx in range(MIN_CONTENT_PAGE, fence):
+                    words = pdf.pages[page_idx].extract_words()
+                    word_count = len(words)
+                    if 0 < word_count <= IMAGE_HEAVY_PAGE_MAX_WORDS:
+                        # Compute y_bottom by locating the footer ("N of M") and
+                        # positioning the block boundary just above it.  This
+                        # eliminates the blank gap between the last answer choice
+                        # and the page-number footer that plagued BUG-002.
+                        y_bottom = self._find_image_heavy_y_bottom(
+                            fitz_doc[page_idx], page_heights[page_idx], words
+                        )
+                        slices = [PageSlice(
+                            page_number=page_idx,
+                            y_top=0.0,
+                            y_bottom=y_bottom,
+                        )]
+                        blocks.append(QuestionBlock(
+                            question_number=question_number,
+                            slices=slices,
+                            text_preview=f"(image-based question {question_number})",
+                        ))
+                        question_number += 1
+            finally:
+                fitz_doc.close()
 
         if not blocks:
             raise BlockDetectionError(
@@ -339,7 +363,78 @@ class BlockDetector:
             page_heights=page_heights,
             page_widths=page_widths,
             used_vision_fallback=False,
+            is_image_heavy=True,
         )
+
+    # ── Image-heavy helpers ───────────────────────────────────────────────────
+
+    def _find_image_heavy_y_bottom(
+        self,
+        fitz_page: fitz.Page,
+        page_height: float,
+        pdfplumber_words: list | None = None,
+    ) -> float:
+        """
+        Return the content-aware y_bottom for an image-heavy question page.
+
+        Primary strategy — footer exclusion (preferred):
+            Locate the page-number footer ("N of M") in the pdfplumber word
+            list and position y_bottom just above it.  The embedded raster
+            question image occupies the full page bbox, so querying image
+            bboxes always returns page_height; only the footer's text
+            position gives us the true content boundary.
+
+        Fallback strategy — PyMuPDF content bboxes:
+            If no footer words are provided (or none match), queries text
+            blocks (footer-filtered), embedded images, and vector drawings
+            via PyMuPDF, takes the max content y, adds padding.
+
+        Args:
+            fitz_page:          PyMuPDF page object.
+            page_height:        Full page height in PDF points.
+            pdfplumber_words:   Words extracted by pdfplumber from this page
+                                (same coordinate system — top-origin pts).
+
+        Returns:
+            y_bottom in PDF points, capped at page_height.
+        """
+        # ── Primary: locate footer and cut just above it ──────────────────
+        if pdfplumber_words:
+            footer_zone_y = page_height * (1.0 - IMAGE_HEAVY_FOOTER_ZONE_FRACTION)
+            # Collect all words sitting in the bottom footer zone.
+            footer_words = [w for w in pdfplumber_words if float(w.get("top", 0)) >= footer_zone_y]
+            if footer_words:
+                footer_text = " ".join(w["text"] for w in footer_words)
+                if IMAGE_HEAVY_FOOTER_PATTERN.search(footer_text):
+                    # Confirmed footer — position block bottom just above it.
+                    footer_top = min(float(w["top"]) for w in footer_words)
+                    return max(0.0, footer_top - BLOCK_BOTTOM_PADDING)
+
+        # ── Fallback: PyMuPDF content bboxes (footer-filtered) ────────────
+        max_y: float = 0.0
+        footer_zone_y = page_height * (1.0 - IMAGE_HEAVY_FOOTER_ZONE_FRACTION)
+
+        for block in fitz_page.get_text("blocks"):
+            block_text = block[4].strip()
+            block_y1   = block[3]
+            if block_y1 > footer_zone_y and IMAGE_HEAVY_FOOTER_PATTERN.search(block_text):
+                continue
+            max_y = max(max_y, block_y1)
+
+        for img_info in fitz_page.get_image_info():
+            bbox = img_info.get("bbox")
+            if bbox:
+                max_y = max(max_y, bbox[3])
+
+        for drawing in fitz_page.get_drawings():
+            rect = drawing.get("rect")
+            if rect:
+                max_y = max(max_y, rect.y1)
+
+        if max_y > 0:
+            return min(max_y + BLOCK_BOTTOM_PADDING, page_height)
+
+        return page_height
 
     # ── Geometry ──────────────────────────────────────────────────────────────
 

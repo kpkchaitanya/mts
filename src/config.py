@@ -78,6 +78,26 @@ DEFAULT_MAX_BLOCK_PAGES: int = int(os.getenv("DEFAULT_MAX_BLOCK_PAGES", "2"))
 # 12 pts ≈ 1/6 inch, enough visual separation without wasting page width.
 COLUMN_GAP_PTS: float = float(os.getenv("COLUMN_GAP_PTS", "12.0"))
 
+# Fraction of a block image's height that may consist of blank (near-white)
+# rows at the bottom before the block is flagged in the compaction report.
+# 0.15 = 15% — allows for small natural padding below content; flags anything
+# beyond that as excess whitespace. Override with WHITESPACE_WARN_THRESHOLD env var.
+WHITESPACE_WARN_THRESHOLD: float = float(os.getenv("WHITESPACE_WARN_THRESHOLD", "0.15"))
+
+# Maximum fraction of page height a single image-heavy question block may
+# occupy before being flagged in the compaction report.
+# EOG question content typically fills 30–93 % of the page (large diagrams
+# can fill most of the crop above the footer).  A block at ≥ 95 % indicates
+# the footer-exclusion fix regressed: y_bottom reverted to page_height and
+# the pixel-trimmer is blocked by the footer at the very bottom.
+IMAGE_HEAVY_HEIGHT_WARN_FRACTION: float = float(os.getenv("IMAGE_HEAVY_HEIGHT_WARN_FRACTION", "0.95"))
+
+# Font size (in PDF points) for the question number label overlaid on each block
+# in the output PDF when question numbers are not visible in the cropped image.
+# Auto-applied for image-heavy (EOG-style) PDFs where the number was in the footer.
+# Override per-run with --question-start and suppressed with --no-question-numbers.
+QUESTION_LABEL_FONT_SIZE: float = float(os.getenv("QUESTION_LABEL_FONT_SIZE", "10"))
+
 # Remaining space in a column (in PDF points) that triggers a gap-fill attempt.
 # ~40 pts ≈ 5 text lines — worth pulling in the next block to avoid wasting space.
 GAP_THRESHOLD_PTS: float = float(os.getenv("GAP_THRESHOLD_PTS", "40.0"))

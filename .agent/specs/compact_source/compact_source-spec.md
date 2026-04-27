@@ -111,10 +111,13 @@ Each stage is independently testable. Stage failure MUST raise a typed exception
 ### 5.1 image_heavy Path
 
 1. Find the answer key fence (§5.3)
-2. Iterate pages 0 through `fence_page - 1`
-3. For each page, extract word count from pdfplumber
-4. Include page as a block if and only if: `0 < word_count <= IMAGE_HEAVY_PAGE_MAX_WORDS`
-5. Each included page becomes exactly one block spanning that single page
+2. Open the source PDF with PyMuPDF (`fitz.open`) in parallel with the pdfplumber pass — one document handle, iterated alongside the word-count loop
+3. Iterate pages 0 through `fence_page - 1`
+4. For each page, extract word count from pdfplumber
+5. Include page as a block if and only if: `0 < word_count <= IMAGE_HEAVY_PAGE_MAX_WORDS`
+6. Each included page becomes exactly one `QuestionBlock` with a single `PageSlice` where:
+   - `y_top = 0.0`
+   - `y_bottom` = result of `_find_image_heavy_y_bottom(fitz_page, page_height, pdfplumber_words)` (see §5.4)
 
 **Testable claims:**
 - Blank pages (0 words) MUST NOT be included
@@ -123,6 +126,7 @@ Each stage is independently testable. Stage failure MUST raise a typed exception
 - Given EOG 2014 gr_3: block count MUST equal 40
 - Given EOG 2014 gr_4: block count MUST equal 50
 - Given EOG 2014 gr_5: block count MUST equal 50
+- Given any EOG question page, the **extracted** block `total_height_pts` MUST be < `IMAGE_HEAVY_HEIGHT_WARN_FRACTION` (95%) × page height
 
 ### 5.2 text_rich Path
 
@@ -138,6 +142,40 @@ Each stage is independently testable. Stage failure MUST raise a typed exception
 - Given STAAR 2022 gr_4: block count MUST equal 35
 - Given STAAR 2022 gr_5: block count MUST equal 36
 - No block may span more than `DEFAULT_MAX_BLOCK_PAGES` (default: 2) pages
+
+### 5.4 image_heavy Content-Bottom Helper — `_find_image_heavy_y_bottom`
+
+Returns the `y_bottom` for a single `image_heavy` page using a two-strategy approach.
+
+**Primary strategy — footer exclusion (preferred):**
+
+EOG question pages embed the question as a full-page raster image, so `get_image_info()` always returns a bbox spanning the entire page. The correct anchor is the pdfplumber **footer word position**.
+
+1. Collect all words in the bottom `IMAGE_HEAVY_FOOTER_ZONE_FRACTION` (15%) of the page from `pdfplumber_words`
+2. Join their text; if it matches `IMAGE_HEAVY_FOOTER_PATTERN` (`^\d+ of \d+$`) → confirmed footer
+3. Return `max(0, footer_top - BLOCK_BOTTOM_PADDING)`
+
+**Fallback strategy — PyMuPDF content bboxes:**
+
+Used when no footer match is found (defensive guard).
+
+| PyMuPDF Query | Content Type Covered |
+|---|---|
+| `fitz_page.get_text("blocks")` (footer-filtered) | Text blocks, excluding footer zone |
+| `fitz_page.get_image_info()` | Embedded raster images |
+| `fitz_page.get_drawings()` | Vector drawings |
+
+1. Take `max_y` across all three content types
+2. If `max_y > 0`: return `min(max_y + BLOCK_BOTTOM_PADDING, page_height)`
+3. Else: return `page_height`
+
+**Testable claims:**
+- Footer-containing page: `y_bottom` = `footer_top - BLOCK_BOTTOM_PADDING`
+- `y_bottom` < `page_height` when content occupies < 100% of page
+- Blank page (no content): `y_bottom` = `page_height` (safe fallback)
+- `y_bottom` never exceeds `page_height`
+
+---
 
 ### 5.3 Answer Key Fence
 
@@ -197,7 +235,25 @@ Output pages use the same dimensions as A4 or the source page dimensions, whiche
 - Output PDF MUST be saved with `deflate=True` and `garbage=4`
 - Output file MUST be ≤ 5 MB for a standard 30–50 question exam at 96 DPI
 
-### 7.6 Output Naming
+### 7.6 Question Number Overlay
+
+**Motivation:** For `image_heavy` (EOG-style) PDFs the question number is embedded in the page footer as text ("N of M"). The footer is removed as part of the BUG-002 fix. The compacted output therefore contains no question numbers — a student-facing quality defect.
+
+**Contract:**
+
+- When `add_question_numbers=True`, `PdfPacker._render()` MUST write a text label (e.g., "1.") at the top-left corner of each block image in the output PDF.
+- The label MUST have a white-filled background rectangle so it is legible over any image content.
+- The label for block with `question_number=N` is `"{question_start + N - 1}."` where `question_start` defaults to 1.
+- `question_start` MUST be respected: if `question_start=5` and `question_number=1`, the label MUST be `"5."` and NOT `"1."`.
+- When `add_question_numbers=False`, NO label text is written. The output PDF MUST contain no injected question number text.
+- `PdfPacker()` constructed with no arguments MUST default to `add_question_numbers=False`. Auto-enabling is the orchestrator's responsibility.
+- The orchestrator MUST auto-enable (`add_question_numbers=True`) when `detection_result.is_image_heavy=True` and the caller has not explicitly passed `add_question_numbers`.
+- The orchestrator MUST NOT auto-enable for `text_rich` PDFs (question numbers are already embedded in the block images).
+- Label text MUST be extractable by a PDF text reader (i.e., written as PDF text, not as an image).
+- Font size is controlled by `QUESTION_LABEL_FONT_SIZE` (default 10 pts).
+- CLI flags: `--no-question-numbers` suppresses labeling; `--question-start N` sets the start offset.
+
+### 7.7 Output Naming
 
 Output file name MUST follow the pattern:
 ```
@@ -222,6 +278,11 @@ Must contain:
 - Input page count → output page count
 - Input file size → output file size, delta, percentage
 - List of all blocks (start page, end page, question number if available)
+- **Block Height Efficiency section** (image_heavy format only, when extracted blocks are provided):
+  - Per-block row: `Q# | block_height/page_height% | ✓ OK / ⚠ OVERSIZED`
+  - Summary: `N of total blocks exceed height threshold`
+  - Threshold: `IMAGE_HEAVY_HEIGHT_WARN_FRACTION` (default 95%)
+  - If any block flagged: overall verdict is FAIL
 
 ### 8.2 Source Boundary Map (`{stem}_source-boundary-map.md`)
 
@@ -306,6 +367,11 @@ All constants are defined in `src/config.py` and can be overridden via environme
 | `IMAGE_HEAVY_AVG_WORDS_THRESHOLD` | 10 | — | Avg words/page threshold for image_heavy classification |
 | `IMAGE_HEAVY_PAGE_MAX_WORDS` | 5 | — | Max words on a page to qualify as an image_heavy block |
 | `COMPARATOR_RENDER_DPI` | (follows PDF_RENDER_DPI) | — | DPI used for visual comparison renders |
+| `IMAGE_HEAVY_FOOTER_ZONE_FRACTION` | 0.15 | — | Bottom fraction of page height treated as footer zone |
+| `IMAGE_HEAVY_FOOTER_PATTERN` | `^\d+ of \d+$` | — | Regex matching page-number footer ("N of M") |
+| `IMAGE_HEAVY_HEIGHT_WARN_FRACTION` | 0.95 | `IMAGE_HEAVY_HEIGHT_WARN_FRACTION` | Max extracted block height / page height before flagging in report |
+| `QUESTION_LABEL_FONT_SIZE` | 10.0 | `QUESTION_LABEL_FONT_SIZE` | Font size (pts) for the question number text label overlaid on each image_heavy block |
+| `WHITESPACE_WARN_THRESHOLD` | 0.15 | `WHITESPACE_WARN_THRESHOLD` | Retained for image_utils pixel-level checks; no longer used by reporter |
 
 ---
 
@@ -326,6 +392,12 @@ Every clause in this spec that makes a claim about behavior MUST map to a test c
 | Blank pages excluded from image_heavy blocks | TC-BD-07 |
 | Section-break pages excluded (≤ 5 words) | TC-BD-08 |
 | Answer key fence excludes answer key pages | TC-BD-09 |
+| EOG extracted block height < 95% of page height (BUG-002 regression) | TC-BD-10 |
+| image_heavy y_bottom < page_height when content at 60% of page (footer-detection strategy) | TC-BD-11 |
+| BUG-002 regression: hardcoded page_height fraction ≥ threshold; fixed y_bottom fraction < threshold | TC-BD-11 |
+| image_heavy y_bottom uses max across text + drawings (lowest element wins) | TC-BD-12 |
+| image_heavy y_bottom: blank page → page_height fallback | TC-BD-13 |
+| image_heavy y_bottom never exceeds page_height | TC-BD-14 |
 | `ValidationError` on encrypted PDF | TC-VAL-01 |
 | `ValidationError` on empty folder | TC-VAL-02 |
 | `ValidationError` on `scale_factor=0` | TC-VAL-03 |
@@ -333,3 +405,8 @@ Every clause in this spec that makes a claim about behavior MUST map to a test c
 | Output named `{stem}_Compacted_{N}col_{run_id}.pdf` | TC-OUT-01 |
 | Output ≤ 5 MB for 50-question exam at 96 DPI | TC-OUT-02 |
 | File size row present in compaction report | TC-RPT-01 |
+| `add_question_numbers=True` → label "1." present in PDF text (TC-PP-01) | TC-PP-01 |
+| `add_question_numbers=False` → no label text in PDF (TC-PP-02) | TC-PP-02 |
+| `question_start=5` + `question_number=1` → label is "5.", not "1." (TC-PP-03) | TC-PP-03 |
+| multi-block pack → each block labeled with its own question_number (TC-PP-04) | TC-PP-04 |
+| `PdfPacker()` default constructor → `add_question_numbers=False`, no labels written (TC-PP-05) | TC-PP-05 |

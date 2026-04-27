@@ -3,13 +3,16 @@ reporter.py
 
 Generates the two compaction artifacts for a compact_source run:
   - source-boundary-map.md  — question block inventory with y-coordinates
-  - compaction-report.md    — page reduction metrics and integrity verdict
+  - compaction-report.md    — page reduction metrics, integrity verdict,
+                               and whitespace efficiency check
 
-Inputs:  BlockDetectionResult, original page count, output PDF page count
+Inputs:  BlockDetectionResult, list of ExtractedBlock, original/output page counts
 Outputs: (boundary_map_md, compaction_report_md, passed)
 """
 
 from src.compact_source.block_detector import BlockDetectionResult
+from src.compact_source.block_extractor import ExtractedBlock
+from src.config import IMAGE_HEAVY_HEIGHT_WARN_FRACTION
 from src.utils.markdown_utils import frontmatter, horizontal_rule, section_header, pass_fail_icon
 
 
@@ -32,22 +35,27 @@ class Reporter:
         subject: str,
         original_size_bytes: int = 0,
         output_size_bytes: int = 0,
+        extracted_blocks: list[ExtractedBlock] | None = None,
     ) -> tuple[str, str, bool]:
         """
         Generate both report artifacts.
 
         Args:
-            detection_result: Block detection output from BlockDetector.
+            detection_result:  Block detection output from BlockDetector.
             original_page_count: Total pages in the original source PDF.
             output_page_count: Actual pages in the compacted output PDF.
-            source_filename: Original PDF filename (for artifact metadata).
-            run_id: Pipeline run ID.
-            grade: Grade level.
-            subject: Subject area.
+            source_filename:   Original PDF filename (for artifact metadata).
+            run_id:            Pipeline run ID.
+            grade:             Grade level.
+            subject:           Subject area.
+            original_size_bytes: File size of the source PDF in bytes.
+            output_size_bytes:   File size of the compacted PDF in bytes.
+            extracted_blocks:  Extracted block images for whitespace analysis.
+                               If None, the whitespace section is omitted.
 
         Returns:
             Tuple of (boundary_map_md, compaction_report_md, passed).
-            passed is True only if all integrity checks pass.
+            passed is True only if all integrity and quality checks pass.
         """
         boundary_map_md = self._build_boundary_map(
             detection_result=detection_result,
@@ -67,6 +75,7 @@ class Reporter:
             run_id=run_id,
             grade=grade,
             subject=subject,
+            extracted_blocks=extracted_blocks,
         )
 
         return boundary_map_md, report_md, passed
@@ -132,6 +141,70 @@ class Reporter:
 
     # ── Compaction Report ─────────────────────────────────────────────────────
 
+    def _build_whitespace_section(
+        self,
+        detection_result: BlockDetectionResult,
+        extracted_blocks: list[ExtractedBlock] | None = None,
+    ) -> tuple[list[str], bool]:
+        """
+        Build the Block Height Efficiency section for the compaction report.
+
+        For image-heavy PDFs (EOG style) checks that each block's detected
+        y_bottom does not consume an excessive fraction of the page height.
+        A block claiming >= IMAGE_HEAVY_HEIGHT_WARN_FRACTION of the page
+        indicates the footer text anchored y_bottom near page_height (BUG-002
+        class defect).  This check runs on block detection output — before
+        the extractor — so it catches the root cause, not a downstream symptom.
+
+        For text-rich PDFs the section is skipped (blocks span arbitrary
+        fractions of a page by design).
+
+        Returns:
+            Tuple of (section_lines, passed).
+            section_lines is empty when not applicable.
+        """
+        if not detection_result.is_image_heavy or not extracted_blocks:
+            return [], True
+
+        # Map question_number → page_height via detection_result for each block.
+        page_heights = detection_result.page_heights
+        block_page: dict[int, int] = {
+            b.question_number: b.slices[-1].page_number
+            for b in detection_result.blocks
+        }
+
+        rows: list[tuple[int, float, bool]] = []  # (q_num, height_fraction, flagged)
+        for block in extracted_blocks:
+            page_idx = block_page.get(block.question_number)
+            ph = page_heights[page_idx] if page_idx is not None else 0.0
+            fraction = block.total_height_pts / ph if ph > 0 else 0.0
+            flagged = fraction >= IMAGE_HEAVY_HEIGHT_WARN_FRACTION
+            rows.append((block.question_number, fraction, flagged))
+
+        flagged_count = sum(1 for _, _, f in rows if f)
+        section_pass = flagged_count == 0
+
+        lines: list[str] = [
+            section_header("Block Height Efficiency"),
+            "",
+            f"Threshold: block height must be < {IMAGE_HEAVY_HEIGHT_WARN_FRACTION:.0%} of page height",
+            "",
+            "| Q# | Block / Page Height | Status |",
+            "|----|---------------------|--------|",
+        ]
+
+        for q_num, fraction, flagged in rows:
+            status = "⚠ OVERSIZED" if flagged else "✓ OK"
+            lines.append(f"| {q_num} | {fraction:.1%} | {status} |")
+
+        lines += [
+            "",
+            f"**{flagged_count} of {len(rows)} blocks exceed height threshold.**",
+            f"Block height check: {pass_fail_icon(section_pass)}",
+        ]
+
+        return lines, section_pass
+
     def _build_compaction_report(
         self,
         detection_result: BlockDetectionResult,
@@ -143,6 +216,7 @@ class Reporter:
         subject: str,
         original_size_bytes: int = 0,
         output_size_bytes: int = 0,
+        extracted_blocks: list[ExtractedBlock] | None = None,
     ) -> tuple[str, bool]:
         questions_detected = detection_result.total_questions
         pages_saved = original_page_count - output_page_count
@@ -166,7 +240,11 @@ class Reporter:
 
         # Integrity: must have detected at least one block
         integrity_pass = questions_detected > 0
-        overall_pass = integrity_pass
+
+        # Block height efficiency check (image-heavy format only)
+        whitespace_section, whitespace_pass = self._build_whitespace_section(detection_result, extracted_blocks)
+
+        overall_pass = integrity_pass and whitespace_pass
         verdict = "PASS" if overall_pass else "FAIL"
 
         lines: list[str] = [
@@ -194,6 +272,14 @@ class Reporter:
             f"| No text re-rendered (visual extraction) | {pass_fail_icon(True)} |",
             f"| Vision fallback used | {'Yes' if detection_result.used_vision_fallback else 'No'} |",
             horizontal_rule(),
+        ]
+
+        # Insert whitespace efficiency section when extracted blocks were provided.
+        if whitespace_section:
+            lines += whitespace_section
+            lines.append(horizontal_rule())
+
+        lines += [
             section_header("Verdict"),
             "",
             f"**{verdict}**",

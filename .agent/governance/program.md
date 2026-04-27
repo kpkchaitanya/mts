@@ -110,6 +110,56 @@ Students who demonstrate:
 
 ---
 
+## Strategy
+
+### Change Classification: Which Track to Follow
+
+Every bug fix or new feature must be assigned a **track** before any code is written. The track determines the required process gates.
+
+| Track | When to use | Required gates |
+|-------|-------------|----------------|
+| **Fast Track** | Bug is urgent (P1/P2), change is shallow (single function, well-understood root cause), team is time-constrained | Log bug/feature → failing test → fix → pass test → manual verify → close bug → update spec/design |
+| **Full Track** | Change is deep or cross-cutting (multiple modules, new contracts, new data model fields), new capability (not a fix), or team has time to do it right | Log bug/feature → update spec → update design → log test cases in §13 → write failing tests → fix → pass tests → manual verify → close bug → update all docs |
+
+**Default to Full Track when in doubt.** Fast Track is an explicit trade-off, not the default.
+
+### Change Depth Signals — Use Full Track if any are true
+
+- The fix changes a public method signature, a dataclass field, or a config constant
+- The fix touches more than one pipeline stage (detector, extractor, packer, reporter)
+- The fix introduces a new concept that belongs in the spec (new contract, new behavior clause)
+- The change requires a new CLI argument or a new config entry
+- The root cause is not yet confirmed — only hypothesized
+- There is screenshot or visual evidence that has not yet been formally described in a bug record
+
+### Defect Response Order (both tracks)
+
+```
+1. Observe defect — screenshot, run output, page counts, visual inspection
+       ↓
+2. Log bug (bugs.md) — description, evidence, root cause hypothesis, severity
+       ↓
+3. Write failing test(s) — reference the bug ID; confirm tests FAIL before fixing
+       ↓
+       [Full Track only: update spec + design first, before step 3]
+       ↓
+4. Fix the code
+       ↓
+5. Run tests → confirm PASS
+       ↓
+6. Run pipeline manually → visual verification
+       ↓
+7. Update bugs.md → fix-verified
+       ↓
+8. Update spec / design / program.md (Full Track: these were done in step 3)
+```
+
+**The bug record is always step 1.** It is the single source of truth for *why* a change was made. No test file is opened until a bug or improvement record exists for it to reference.
+
+**Only humans close bugs.** Agents may only set status to `fix-applied`. Human visual verification is required before status moves to `fix-verified`.
+
+---
+
 ## AI-First SDLC
 
 The MTS system is built on an **AI-First Software Development Lifecycle** — every phase of building, testing, observing, and improving is designed to be AI-native, traceable, and self-improving.
@@ -156,7 +206,7 @@ Harness engineering is the full set of infrastructure that makes the pipeline **
 
 | Harness Layer | Standard | Status |
 |---------------|----------|--------|
-| **Test suite** | pytest — unit tests per module, integration test end-to-end, Claude API mocked | ❌ Missing |
+| **Test suite** | pytest — unit tests per module, integration test end-to-end, Claude API mocked | ✅ Partial (image_utils TC-WS-01–06; block_detector TC-BD-10–14; pdf_packer TC-PP-01–05; 18 tests total) |
 | **Structured logging** | `logging` module, per-run log file, severity levels — no bare `print()` in pipeline | ❌ Missing |
 | **Run telemetry** | Machine-readable `run-telemetry.json` in every run folder | ❌ Missing |
 | **API resilience** | Exponential backoff + jitter on all Claude API calls, configurable timeout | ❌ Missing |
@@ -176,7 +226,7 @@ Harness engineering is the full set of infrastructure that makes the pipeline **
 
 ### Eval Quality Dimensions (compact_source)
 
-Every run is scored on these 5 dimensions. Score 1–5 per dimension. Overall PASS requires all ≥ 4.
+Every run is scored on these 6 dimensions. Score 1–5 per dimension. Overall PASS requires all ≥ 4.
 
 | # | Dimension | Method | Pass Threshold |
 |---|-----------|--------|----------------|
@@ -185,6 +235,7 @@ Every run is scored on these 5 dimensions. Score 1–5 per dimension. Overall PA
 | 3 | **Layout integrity** | Page count in expected range, no oversized blocks, no column overflow | All pass |
 | 4 | **File size reasonableness** | Output file within configured size bounds | Within bounds |
 | 5 | **Source fidelity** | Claude vision: output images match source visual content | ≥ 4/5 |
+| 6 | **Whitespace efficiency** | Per-block blank bottom fraction ≤ `WHITESPACE_WARN_THRESHOLD` (default 15%) | All blocks pass |
 
 ### Self-Healing Repair Playbook
 

@@ -32,6 +32,8 @@ Add new items at the **top** of the Open Items table (newest first).
 
 | ID | Date | Type | Priority | Feature | Summary | Status |
 |----|------|------|----------|---------|---------|--------|
+| IMP-018 | 2026-04-27 | feature | P2 — should have | compact_source | Question number overlay — for image_heavy PDFs (EOG) the question number is embedded in the footer ("N of 40") and is lost when the footer is cropped; packer must overlay sequential number labels ("1.", "2.", …) as white-backed text in the top-left of each block in the output PDF; `--question-start N` allows user to shift the sequence; `--no-question-numbers` suppresses; auto-enabled for `is_image_heavy=True`, suppressed for text_rich | done |
+| IMP-017 | 2026-04-27 | eval | P1 | compact_source | Block height efficiency checker — post-run check measures `extracted block height / page height` per block; flags any block ≥ 95% (`IMAGE_HEAVY_HEIGHT_WARN_FRACTION`) in compaction report; image_heavy format only; auto-heal deferred to IMP-018 | done |
 | IMP-016 | 2026-04-26 | dx | P2 | global | CONTRIBUTING.md and dev setup guide | open |
 | IMP-015 | 2026-04-26 | dx | P2 | global | CI pipeline — GitHub Actions: lint, typecheck, test on push | open |
 | IMP-014 | 2026-04-26 | dx | P2 | global | Dependency lockfile via pip-tools (`requirements.lock`) | open |
@@ -174,4 +176,47 @@ When logging an improvement, add a row to the Open Items table AND create a deta
 
 ## Improvement Detail Records
 
-*No improvements logged yet.*
+---
+
+### IMP-018
+
+**Date:** 2026-04-27
+**Type:** feature
+**Priority:** P2 — should have
+**Feature:** compact_source
+**Status:** done
+
+#### Description
+
+For image-heavy PDFs (EOG format) each source page embeds the question content as a full-page raster image. The question number is text in the page footer ("1 of 40", "2 of 40", …) — not embedded in the image itself. When BUG-002 was fixed, the footer crop correctly eliminates the blank gap below the content, but it also permanently removes the only location where the question number appeared. The compacted output PDF therefore has no question numbers on any block.
+
+Students and teachers using the compacted output cannot identify which question they are working on.
+
+#### Evidence
+
+- Visual inspection of gr_3 EOG compacted output (run 20260427_092907): all 15 blocks show question content only — no question numbers visible.
+- `QuestionBlock.question_number` is assigned sequentially from 1 during `_detect_image_heavy_blocks()` and propagates to `ExtractedBlock.question_number`, but `PdfPacker._render()` inserts only the image; it never writes the number into the output PDF.
+- gr_3 source footer text: "1 of 40", "2 of 40", … "40 of 40" — these are the sole location of question numbers in the EOG source format.
+
+#### Success Criteria
+
+1. Each block in the output PDF displays its question number as a text label (e.g., "1.") at the top-left corner, overlaid on the block image with a white background for legibility.
+2. `--question-start N` shifts the entire label sequence — first block shows "N.", second "N+1.", etc.
+3. `--no-question-numbers` suppresses labeling entirely (round-trip fidelity mode).
+4. Labels are auto-enabled when `is_image_heavy=True` and auto-suppressed for text-rich PDFs where numbers are embedded in the image content.
+5. Labels survive a round-trip: opening the output PDF with a text extractor returns the label text.
+6. Unit tests: TC-PP-01 … TC-PP-05 (see spec §13).
+
+#### Proposed Approach
+
+- `PdfPacker.__init__`: add `add_question_numbers: bool = False`, `question_start: int = 1`
+- `PdfPacker._render`: after `page.insert_image(rect, …)`, draw white-backed text label using PyMuPDF `page.draw_rect` + `page.insert_text` with `overlay=True`
+- `run_compact_source`: add matching params; auto-detect: `add_question_numbers = True if is_image_heavy and caller did not override`
+- `src/config.py`: add `QUESTION_LABEL_FONT_SIZE = 10.0`
+- CLI: `--no-question-numbers` flag, `--question-start N`
+
+#### Authority Layer to Update
+
+- spec §5 (new testable claim), §6 (packing stage), §12 (config table), §13 (TC-PP-01 … TC-PP-05)
+- design §3 (packer rendering step)
+- program.md harness engineering table (test count update)
