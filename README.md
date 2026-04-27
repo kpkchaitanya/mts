@@ -1,6 +1,7 @@
-# MTS — AI-Native Agentic System
+# MTS — Master Tuition Services - Making Academic Teaching more enjoyable, effective, and thoughtful!
 
-**Project:** Masters Tuition Services LLC
+
+**Project:** Masters Tuition Services
 **Tagline:** "Making Academic Tuition More Enjoyable, Effective, & Very Affordable"
 **Purpose:** Build an AI-native system that supports MTS teachers in delivering high-quality, curriculum-aligned education to students in Grades 2–10. The system automates content generation (worksheets, answer keys, lesson plans) so that teachers can focus on judgment, connection, and care — while every output upholds the MTS standard: correct, clear, and student-first.
 
@@ -114,3 +115,10 @@ In VS Code Copilot Chat, type `/compact_source` to be guided interactively throu
 4. Every run produces a trace and eval summary
 5. Correctness over creativity
 6. Source fidelity over hallucination
+
+---
+
+## Command Prompts
+
+- `prompts/compact_source.prompt.md` — run the compact source pipeline
+- `prompts/switch_git_identity.prompt.md` — switch global Git username/email using command parameters
