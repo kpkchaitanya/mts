@@ -5,3 +5,6 @@
 bin/
 **/__pycache__/
 **/*.pyc
+
+# Agent eval run outputs (regenerable pipeline artifacts)
+.agent/evals/runs/
