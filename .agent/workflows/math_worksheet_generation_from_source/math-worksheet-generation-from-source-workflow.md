@@ -20,6 +20,7 @@ Request → Intake → Source Extract → Concept Map → Plan → Generate → 
 |------|-------|-------|--------|
 | 1 | intake-agent | raw request | request.json |
 | 2 | source-extractor-agent | request.json + source | source-extract.md |
+| 2a | **Human checkpoint** | source-extract.md | Operator confirms detected question count matches expected exam questions before extraction proceeds. Use `--yes` to skip in batch mode. |
 | 3 | concept-mapper-agent | source-extract.md | concept-map.md |
 | 4 | worksheet-planner-agent | concept-map.md + request | plan.md |
 | 5 | question-generator-agent | plan.md | worksheet-draft.md |

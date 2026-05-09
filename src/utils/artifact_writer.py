@@ -28,19 +28,23 @@ class ArtifactWriter:
     Each instance represents exactly one run.
     """
 
-    def __init__(self, run_id: str | None = None) -> None:
+    def __init__(self, run_id: str | None = None, feature_name: str | None = None) -> None:
         """
         Initialize the writer and create the run directory.
 
         Args:
-            run_id: Optional explicit run ID. If omitted, a timestamp-based
-                    ID is generated (format: YYYYMMDD_HHMMSS).
+            run_id:       Optional explicit run ID. If omitted, a timestamp-based
+                          ID is generated (format: YYYYMMDD_HHMMSS).
+            feature_name: Optional feature folder name override. If omitted,
+                          falls back to the FEATURE_NAME config constant.
         """
         # Generate a unique run ID if not provided
         self.run_id: str = run_id or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
+        _feature = feature_name if feature_name else FEATURE_NAME
+
         # Build the full path: .agent/evals/runs/<feature>/<run_id>/
-        self.run_path: Path = ARTIFACTS_BASE_PATH / FEATURE_NAME / self.run_id
+        self.run_path: Path = ARTIFACTS_BASE_PATH / _feature / self.run_id
 
         # Create the directory and all missing parents
         self.run_path.mkdir(parents=True, exist_ok=True)
@@ -100,18 +104,15 @@ class ArtifactWriter:
 
     def bin_path(self, filename: str) -> Path:
         """
-        Return the full path for a binary artifact in the run's bin/ subfolder.
+        Return the full path for a binary artifact in the run folder.
 
-        The bin/ directory is created on first call. Use this for compiled or
-        rendered binary outputs (e.g., PDFs) to keep them separate from text
-        artifacts in the run root.
+        Previously wrote to a ``bin/`` subfolder; now writes directly to the
+        run root alongside all other artifacts (governance change).
 
         Args:
             filename: Binary artifact filename (e.g., "compacted-source.pdf").
 
         Returns:
-            Full Path inside <run_path>/bin/.
+            Full Path inside the run folder (same as ``artifact_path``).
         """
-        bin_dir = self.run_path / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        return bin_dir / filename
+        return self.artifact_path(filename)

@@ -98,6 +98,19 @@ Teachers cannot reformat these PDFs manually: math symbols, graphs, geometric fi
 - Terminal output includes the specific reason (unreadable / corrupted / encrypted)
 - Exit code is non-zero
 
+### US-08 — Constructed-response blank space is trimmed
+> As Krishna, when a question is a constructed-response (open-ended, not multiple-choice), I want the large blank work areas and answer lines trimmed down to 1–2 blank lines so the compacted output does not waste page space on empty fields.
+
+**Background:** Released-test PDFs for NY and similar formats include constructed-response questions that reserve half a page or more for student work (blank lines, "Show your work" space, answer blanks labelled "Answer ___", "Explain how you know.", etc.). In a printed study worksheet this space is unnecessary because students will be doing the work on a separate sheet or on-screen.
+
+**Acceptance Criteria:**
+- A block is classified as `constructed_response` when its text contains one or more `CR_TRIM_MARKERS` below the last detectable content line (stem / diagram / answer choice)
+- For NY format, the "This question is worth N credit(s)." line is a reliable indicator of a constructed-response block and MUST NOT itself be trimmed
+- `y_bottom` is set to the y-coordinate of the first `CR_TRIM_MARKER` match + `CR_BLANK_LINES_KEEP` (default: 2) × `CR_LINE_HEIGHT_PTS` (default: 12)
+- If no trim marker is found within the block span, no trimming is applied (safe fallback)
+- Trimming is applied after `_expand_blocks_for_vector_choices` so vector-drawn diagrams are preserved
+- At least 1 blank line of whitespace is visible below the last content element in every trimmed block
+
 ---
 
 ## 4. Non-Goals

@@ -36,7 +36,7 @@ FEATURE_NAME: str = "math_worksheet_generation_from_source"
 # 96 DPI produces 817×1057 px on a letter page — crisp enough for classroom
 # printing while keeping output PDF file sizes reasonable (~35% smaller than 150 DPI).
 # Override with PDF_RENDER_DPI env var if higher fidelity is needed.
-PDF_RENDER_DPI: int = int(os.getenv("PDF_RENDER_DPI", "96"))
+PDF_RENDER_DPI: int = int(os.getenv("PDF_RENDER_DPI", "200"))
 
 # Pages before this zero-based index are skipped during boundary search.
 # State exams always have at least one cover/instruction page before Q1.
@@ -97,6 +97,29 @@ IMAGE_HEAVY_HEIGHT_WARN_FRACTION: float = float(os.getenv("IMAGE_HEAVY_HEIGHT_WA
 # Auto-applied for image-heavy (EOG-style) PDFs where the number was in the footer.
 # Override per-run with --question-start and suppressed with --no-question-numbers.
 QUESTION_LABEL_FONT_SIZE: float = float(os.getenv("QUESTION_LABEL_FONT_SIZE", "10"))
+
+# ─── Constructed-Response Trimming ───────────────────────────────────────────
+
+# Number of blank line heights to preserve below the first constructed-response
+# trim marker (e.g. "Answer ___", "Explain how you know.", "Show your work").
+# Default of 2 leaves a visible but compact work area.
+CR_BLANK_LINES_KEEP: int = int(os.getenv("CR_BLANK_LINES_KEEP", "2"))
+
+# Assumed single line height in PDF points used for blank-line padding in
+# constructed-response trimming.  12 pts ≈ standard 12-point body text.
+CR_LINE_HEIGHT_PTS: float = float(os.getenv("CR_LINE_HEIGHT_PTS", "12.0"))
+
+# Minimum vertical gap (PDF points) between consecutive text lines that is
+# treated as a blank work area in constructed-response trimming.  When two
+# adjacent lines are separated by more than this threshold the block is cropped
+# at the end of the first line + CR_BLANK_LINES_KEEP * CR_LINE_HEIGHT_PTS.
+#
+# 100 pts ≈ 7 text lines of whitespace.  This is large enough to skip normal
+# inter-paragraph spacing (~14–20 pts) and diagram regions (~50–90 pts) while
+# reliably catching the 300–600 pt student-work blanks in NY released tests.
+CR_BLANK_GAP_THRESHOLD: float = float(os.getenv("CR_BLANK_GAP_THRESHOLD", "100.0"))
+
+# ─── Packing Gap / Scale ─────────────────────────────────────────────────────
 
 # Remaining space in a column (in PDF points) that triggers a gap-fill attempt.
 # ~40 pts ≈ 5 text lines — worth pulling in the next block to avoid wasting space.

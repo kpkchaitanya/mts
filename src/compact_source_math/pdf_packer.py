@@ -29,7 +29,7 @@ from typing import Optional
 
 import fitz  # PyMuPDF
 
-from src.compact_source.block_extractor import ExtractedBlock
+from src.compact_source_math.block_extractor import ExtractedBlock
 from src.config import (
     COLUMN_GAP_PTS,
     GAP_THRESHOLD_PTS,
@@ -194,8 +194,10 @@ class PdfPacker:
 
             col_bottom = self._margin + self._col_h
 
-            # Check if block fits in remaining column space
-            if col_y + scaled_h > col_bottom:
+            # Check if block fits in remaining column space.
+            # If the column is already empty and the block still overflows,
+            # force-place it to avoid an infinite advance loop.
+            if col_y + scaled_h > col_bottom and col_blocks:
                 # Try gap-fill by pulling in one or more next blocks
                 gap_fill_result = self._try_gap_fill_multi(
                     col_blocks, blocks, block_idx, base_scale, col_x[current_col]

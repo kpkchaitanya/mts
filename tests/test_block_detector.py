@@ -31,7 +31,7 @@ import io
 import pytest
 import fitz  # PyMuPDF
 
-from src.compact_source.block_detector import BlockDetector, BLOCK_BOTTOM_PADDING
+from src.compact_source_math.block_detector import BlockDetector, BLOCK_BOTTOM_PADDING
 from src.config import IMAGE_HEAVY_HEIGHT_WARN_FRACTION
 
 

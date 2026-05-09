@@ -10,8 +10,8 @@ Inputs:  BlockDetectionResult, list of ExtractedBlock, original/output page coun
 Outputs: (boundary_map_md, compaction_report_md, passed)
 """
 
-from src.compact_source.block_detector import BlockDetectionResult
-from src.compact_source.block_extractor import ExtractedBlock
+from src.compact_source_math.block_detector import BlockDetectionResult
+from src.compact_source_math.block_extractor import ExtractedBlock
 from src.config import IMAGE_HEAVY_HEIGHT_WARN_FRACTION
 from src.utils.markdown_utils import frontmatter, horizontal_rule, section_header, pass_fail_icon
 

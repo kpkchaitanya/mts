@@ -80,21 +80,27 @@ Each stage is independently testable. Stage failure MUST raise a typed exception
 ### 4.2 Classification Algorithm
 
 1. Open the PDF with pdfplumber
-2. Sample the first `IMAGE_HEAVY_SAMPLE_PAGES` (default: 10) pages that have at least 1 character
-3. For each sampled page, count words using `page.extract_text()` split on whitespace
-4. Compute `avg_words = sum(word_counts) / len(sampled_pages)`
-5. If `avg_words < IMAGE_HEAVY_AVG_WORDS_THRESHOLD` (default: 10) → classify as `"image_heavy"`
-6. Otherwise → classify as `"text_rich"`
+2. Sample the first `IMAGE_HEAVY_SAMPLE_PAGES` (default: 10) pages starting at `MIN_CONTENT_PAGE`
+3. For each sampled page, count words using `pdfplumber` `page.extract_words()`
+4. Count how many sampled pages have `word_count <= IMAGE_HEAVY_PAGE_MAX_WORDS` → call this `image_heavy_page_count`
+5. Compute `fraction = image_heavy_page_count / pages_sampled`
+6. If `fraction >= IMAGE_HEAVY_MIN_FRACTION` (default: 0.5) → classify as `"image_heavy"`
+7. Otherwise → classify as `"text_rich"`
 
-**Testable claim:** Given a valid EOG 2014 grade 3 PDF, `_classify_format()` MUST return `"image_heavy"`. Given a valid STAAR 2022 grade 3 PDF, MUST return `"text_rich"`.
+**Rationale for fraction-based approach:** An average-based threshold (prior approach) is fragile for PDFs that mix word-rich cover/instruction pages with image-heavy question pages. A majority vote counts how many pages individually look like image-heavy pages, making it robust to a small number of instruction pages at the start of the document.
+
+**Example:** An NY released test PDF with 3 instruction pages (50+ words each) and 7 image-based question pages (≤5 words each) in the first 10 sampled pages yields `fraction = 0.70 ≥ 0.5` → correctly classified as `"image_heavy"`.
+
+**Testable claim:** Given a valid EOG 2014 grade 3 PDF, `_classify_format()` MUST return `"image_heavy"`. Given a valid STAAR 2022 grade 3 PDF, MUST return `"text_rich"`. Given an NY released-test PDF with ≥50% image-based question pages in the sample window, MUST return `"image_heavy"`.
 
 ### 4.3 Constants
 
 | Constant | Default | Meaning |
 |----------|---------|---------|
-| `IMAGE_HEAVY_SAMPLE_PAGES` | 10 | Number of non-blank pages to sample for classification |
-| `IMAGE_HEAVY_AVG_WORDS_THRESHOLD` | 10 | avg words/page below which PDF is classified as image_heavy |
-| `IMAGE_HEAVY_PAGE_MAX_WORDS` | 5 | Max words on a content page to be included as a question block |
+| `IMAGE_HEAVY_SAMPLE_PAGES` | 10 | Number of pages to sample for classification (starting at `MIN_CONTENT_PAGE`) |
+| `IMAGE_HEAVY_MIN_FRACTION` | 0.5 | Fraction of sampled pages that must qualify as image-heavy for the PDF to be classified `image_heavy` |
+| `IMAGE_HEAVY_AVG_WORDS_THRESHOLD` | 10 | Retained constant (no longer used by classifier; kept for backward compatibility) |
+| `IMAGE_HEAVY_PAGE_MAX_WORDS` | 5 | Max words on a page to count that page as an image-heavy page during classification |
 
 ### 4.4 Format Detection Failure Modes
 
@@ -103,6 +109,33 @@ Each stage is independently testable. Stage failure MUST raise a typed exception
 | PDF has < 3 non-blank pages | Classify as `"image_heavy"` (conservative) |
 | pdfplumber raises exception during sampling | Raise `DetectionError` with message identifying the page and exception |
 | All sampled pages have 0 words | Classify as `"image_heavy"` |
+| Sampled pages include word-rich cover/instruction pages followed by image-heavy question pages | Fraction-based vote correctly classifies as `"image_heavy"` when ≥50% of sampled pages are image-heavy |
+
+---
+
+## 4.5 Human Question-Count Gate
+
+After block detection completes and before block extraction begins, the pipeline MUST pause for operator confirmation when running in interactive mode.
+
+**Purpose:** Block detection can mis-classify hybrid-format PDFs or fail to match a non-standard question numbering pattern. A human gate prevents extraction of a wrong or near-empty block set from proceeding silently to produce a useless output PDF.
+
+**Contract:**
+
+| Condition | Behavior |
+|-----------|----------|
+| `auto_confirm=False` AND `sys.stdin.isatty()` is `True` | Print detected count, source page count, format, and low-count warning (if applicable); prompt operator `[Y/n]`; abort on `n`/`no` |
+| `auto_confirm=True` | Skip gate entirely; pipeline continues without prompting |
+| `sys.stdin.isatty()` is `False` (pipe/redirect) | Skip gate silently (non-interactive context) |
+| Detected count < 3 OR detected count / source pages < 0.5 | Print a `WARNING: LOW COUNT` warning regardless of `auto_confirm` |
+
+**CLI:**
+- `--yes` / `-y` sets `auto_confirm=True` for a run
+- Default: `auto_confirm=False` (gate is active)
+
+**Testable claims:**
+- When `auto_confirm=False` and stdin is a TTY, the pipeline MUST NOT proceed to extraction without reading operator input
+- When `auto_confirm=True`, no input prompt is issued and the pipeline proceeds immediately
+- When detected count < 3, a `WARNING` message MUST appear in the console log regardless of `auto_confirm`
 
 ---
 
@@ -190,6 +223,83 @@ The answer key fence is the index of the first page (0-based) that should NOT be
 **If no fence is found:** `fence_page = total_page_count` (include all pages)
 
 **Testable claim:** Given an EOG PDF with an answer key at page 47 (0-based), `_find_answer_key_fence()` MUST return 47. Given a STAAR PDF with no answer key, MUST return `total_page_count`.
+
+---
+
+## 5.5 Constructed-Response Block Trimming
+
+### 5.5.1 Motivation
+
+Some exam formats (notably NY released tests) contain constructed-response questions that occupy a full output page. The body of such a block consists of a short stem, optional diagram(s), followed by instructions ("Show your work", "Explain how you know.", "Answer ___  units") and then a large blank rectangle reserved for student work. In a printed drill worksheet this blank space is wasted; trimming it to 1–2 blank lines reclaims the space.
+
+### 5.5.2 Constructed-Response Block Identification
+
+A `text_rich` block is a candidate for trimming when pdfplumber text extraction for that block span contains at least one line whose lowercase text **starts with or equals** any string in `CR_TRIM_MARKERS`:
+
+```
+CR_TRIM_MARKERS = [
+    "answer",
+    "show your work",
+    "explain",
+    "describe",
+    "justify",
+    "write your answer",
+]
+```
+
+Matching is case-insensitive and applied to the stripped line text. A line matches if `line.lower().startswith(marker)`.
+
+**Note:** The NY "This question is worth N credit(s)." line is a helpful contextual indicator but is NOT itself a trim marker — it appears at the top of the block (before the stem) and must not be used as a crop boundary.
+
+### 5.5.3 Trim Algorithm — `_trim_constructed_response_blocks()`
+
+Called after `_expand_blocks_for_vector_choices()` and before the final block list is returned from `detect()`.
+
+For each block `b` in the detected block list:
+
+1. Iterate over all pdfplumber words in `b`'s page span; collect lines from `b.y_top` or the block's stem start downward.
+2. Scan lines in order. Find the **first** line whose text matches any `CR_TRIM_MARKERS` entry (case-insensitive prefix match).
+3. If no match: skip this block (no trimming applied).
+4. If match found at line with bounding box top `trim_y`:
+   - `new_y_bottom = trim_y + CR_BLANK_LINES_KEEP * CR_LINE_HEIGHT_PTS`
+   - `new_y_bottom = min(new_y_bottom, b.y_bottom)` — never extend below existing boundary
+   - `new_y_bottom = max(new_y_bottom, trim_y + CR_LINE_HEIGHT_PTS)` — always keep at least 1 line of padding
+   - Apply: `b.y_bottom = new_y_bottom`
+
+For multi-page blocks (where the trim marker may be on a page following the stem page): the same logic applies using the slice coordinates of the last page in the block. The last page's `y_bottom` is updated; preceding pages' `y_bottom` values are unchanged.
+
+### 5.5.4 Constants
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `CR_BLANK_LINES_KEEP` | 2 | Number of blank line heights to preserve below the first trim marker |
+| `CR_LINE_HEIGHT_PTS` | 12.0 | Assumed single line height in points used for blank-line padding computation |
+| `CR_TRIM_MARKERS` | see §5.5.2 | List of lowercase prefix strings that identify the crop boundary |
+
+### 5.5.5 Applicability
+
+| Format | Trimming Active? | Rationale |
+|--------|-----------------|-----------|
+| `text_rich` | ✓ Yes | Constructed-response markers are detectable from pdfplumber text |
+| `image_heavy` | ✗ No | Block text is not extractable (questions are embedded rasters); trimming cannot be applied safely |
+
+### 5.5.6 Testable Claims
+
+- Given a NY released-test `text_rich` block containing "Answer ___ units", `y_bottom` MUST be ≤ `trim_y + CR_BLANK_LINES_KEEP * CR_LINE_HEIGHT_PTS`
+- Given a block with no `CR_TRIM_MARKERS` present, `y_bottom` MUST be unchanged after `_trim_constructed_response_blocks()`
+- `new_y_bottom` MUST NOT exceed the pre-trim `y_bottom`
+- `new_y_bottom` MUST be at least `trim_y + CR_LINE_HEIGHT_PTS` (minimum 1-line pad)
+- For `image_heavy` blocks, `_trim_constructed_response_blocks()` MUST NOT modify any block boundary
+
+### 5.5.7 Edge Cases
+
+| ID | Situation | Expected Behavior |
+|----|-----------|-------------------|
+| EC-CR-01 | Trim marker is the very first line in the block (malformed block) | Trim to `trim_y + CR_BLANK_LINES_KEEP * CR_LINE_HEIGHT_PTS`; accept the result (stem may have been mis-detected) |
+| EC-CR-02 | Multiple trim markers on the same block page | Use the **first** (topmost) match as the crop boundary |
+| EC-CR-03 | "Answer" appears in the stem text (e.g., "What answer best explains...") | The line will match; this is a known acceptable false positive — the next-line heuristic is not required for v1 |
+| EC-CR-04 | Block spans two pages; trim marker is on the second page | Update only the last-page `y_bottom`; leave the first page slice unchanged |
+| EC-CR-05 | `CR_BLANK_LINES_KEEP = 0` | Keep exactly 0 lines below the trim marker (crop immediately at `trim_y`) |
 
 ---
 
@@ -344,7 +454,8 @@ All exceptions must:
 | EC-03 | PDF has no detectable blocks (e.g., only a cover page) | `DetectionError`; report states 0 blocks; exit code 1 |
 | EC-04 | Answer key is the first page (malformed PDF) | Fence = 0; 0 blocks detected; `DetectionError` |
 | EC-05 | Block image renders as pure white (blank raster) | Block is included (may be intentional blank question); no special handling |
-| EC-06 | Source PDF has mixed formats (some pages image-heavy, some text-rich) | Classification uses average over sampled pages; one format is chosen for the whole document |
+| EC-06 | Source PDF has mixed formats (some pages image-heavy, some text-rich) | Fraction-based majority vote classifies as `image_heavy` when ≥50% of sampled pages have ≤5 words; one format is chosen for the whole document |
+| EC-13 | Block detection produces a suspiciously low count (< 3 blocks, or < 0.5 blocks per source page) | Human gate displays a `WARNING: LOW COUNT` message; operator must confirm or abort before extraction proceeds |
 | EC-07 | `--pdf` folder contains no `.pdf` files | `ValidationError` with message "No PDF files found in folder" |
 | EC-08 | Single block is taller than one full output page at scale 100 | Block is placed on its own page, scaled down to fit page height instead of column width |
 | EC-09 | `scale_factor=0` | `ValidationError` before pipeline starts |
@@ -372,6 +483,8 @@ All constants are defined in `src/config.py` and can be overridden via environme
 | `IMAGE_HEAVY_HEIGHT_WARN_FRACTION` | 0.95 | `IMAGE_HEAVY_HEIGHT_WARN_FRACTION` | Max extracted block height / page height before flagging in report |
 | `QUESTION_LABEL_FONT_SIZE` | 10.0 | `QUESTION_LABEL_FONT_SIZE` | Font size (pts) for the question number text label overlaid on each image_heavy block |
 | `WHITESPACE_WARN_THRESHOLD` | 0.15 | `WHITESPACE_WARN_THRESHOLD` | Retained for image_utils pixel-level checks; no longer used by reporter |
+| `CR_BLANK_LINES_KEEP` | 2 | — | Number of blank line heights to preserve below the first constructed-response trim marker |
+| `CR_LINE_HEIGHT_PTS` | 12.0 | — | Assumed line height in points used for blank-line padding in constructed-response trimming |
 
 ---
 
@@ -410,3 +523,8 @@ Every clause in this spec that makes a claim about behavior MUST map to a test c
 | `question_start=5` + `question_number=1` → label is "5.", not "1." (TC-PP-03) | TC-PP-03 |
 | multi-block pack → each block labeled with its own question_number (TC-PP-04) | TC-PP-04 |
 | `PdfPacker()` default constructor → `add_question_numbers=False`, no labels written (TC-PP-05) | TC-PP-05 |
+| NY text_rich block with "Answer" line → `y_bottom` trimmed to `trim_y + CR_BLANK_LINES_KEEP * CR_LINE_HEIGHT_PTS` | TC-CR-01 |
+| Block with no trim markers → `y_bottom` unchanged | TC-CR-02 |
+| `new_y_bottom` never exceeds pre-trim `y_bottom` | TC-CR-03 |
+| `new_y_bottom` ≥ `trim_y + CR_LINE_HEIGHT_PTS` (minimum 1-line pad) | TC-CR-04 |
+| `image_heavy` blocks: `_trim_constructed_response_blocks()` changes no block boundary | TC-CR-05 |

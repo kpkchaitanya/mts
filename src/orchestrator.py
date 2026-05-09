@@ -5,8 +5,9 @@ Entry point for the MTS pipeline system.
 Routes requests to the correct transformation mode and runs the full pipeline.
 
 Usage (run from the project root):
-    python -m src.orchestrator compact_source --pdf <path> --grade <n> --subject <subject>
-    python -m src.orchestrator generate_worksheet --request <path>
+    python -m src.orchestrator compact_source_math --pdf <path> --grade <n> --subject <subject>
+    python -m src.orchestrator compact_source_reading --pdf <path> --grade <n> --subject <subject>
+    python -m src.orchestrator generate_math_worksheet --request <path>
 """
 
 import argparse
@@ -16,15 +17,19 @@ import sys
 import time
 from pathlib import Path
 
-from src.compact_source.block_detector import (
+from src.compact_source_math.block_detector import (
     BlockDetector,
     BlockDetectionError,
     BlockDetectionResult,
 )
-from src.compact_source.block_extractor import BlockExtractor
-from src.compact_source.pdf_packer import PdfPacker
-from src.compact_source.reporter import Reporter
-from src.compact_source.comparator import compare_pdfs
+from src.compact_source_math.block_extractor import BlockExtractor
+from src.compact_source_math.pdf_packer import PdfPacker
+from src.compact_source_math.reporter import Reporter
+from src.compact_source_math.comparator import compare_pdfs
+from src.compact_source_reading.passage_detector import PassageDetector
+from src.compact_source_reading.passage_extractor import PassageExtractor
+from src.compact_source_reading.pdf_packer import ReadingPdfPacker
+from src.compact_source_reading.reporter import ReadingReporter
 from src.utils.artifact_writer import ArtifactWriter
 from src.utils.claude_client import ClaudeClient
 from src.utils.pdf_utils import get_page_count
@@ -84,13 +89,13 @@ def _teardown_run_logging() -> None:
     _LOGGING_HANDLERS.clear()
 
 
-def run_compact_source(
+def run_compact_source_math(
     pdf_path: Path,
     grade: int,
     subject: str,
     scale_factor: float = None,
     max_pages: int = None,
-    columns: int = 1,
+    columns: int | str = "dual",
     max_block_pages: int = None,
     problem_list: str | None = None,
     compare: bool = False,
@@ -99,9 +104,10 @@ def run_compact_source(
     setup_logging: bool = True,
     add_question_numbers: bool | None = None,
     question_start: int = 1,
+    auto_confirm: bool = False,
 ) -> RunTelemetry:
     """
-    Execute the full compact_source pipeline for a given source worksheet PDF.
+    Execute the full compact_source_math pipeline for a given source worksheet PDF.
 
     Pipeline steps:
     1. BlockDetector  — locate question blocks using pdfplumber y-coordinates
@@ -148,13 +154,13 @@ def run_compact_source(
         artifact_writer = ArtifactWriter()
 
     if setup_logging:
-        _setup_run_logging(artifact_writer.bin_path("run.log"))
+        _setup_run_logging(artifact_writer.artifact_path("run.log"))
 
     run_start = time.perf_counter()
 
     tel = RunTelemetry(
         run_id=artifact_writer.run_id,
-        feature="compact_source",
+        feature="compact_source_math",
         source_file=pdf_path.name,
         source_path=str(pdf_path.resolve()),
         parameters={
@@ -174,10 +180,11 @@ def run_compact_source(
         source_filename = pdf_path.name
 
         logger.info("")
-        logger.info(f"compact_source — {pdf_path.name}")
+        logger.info(f"compact_source_math — {pdf_path.name}")
+        _col_label = "1+2 (dual)" if columns == "dual" else str(columns)
         logger.info(
             f"Grade: {grade} | Subject: {subject} | Scale: {scale_factor}% | "
-            f"Columns: {columns}"
+            f"Columns: {_col_label}"
             + (f" | Max pages: {max_pages}" if max_pages is not None else "")
         )
         logger.info(f"Run ID: {artifact_writer.run_id}")
@@ -262,6 +269,47 @@ def run_compact_source(
             "used_vision_fallback": detection_result.used_vision_fallback,
         }
 
+        # ── Human gate: validate question count before extraction ─────────────
+        # Block detection can misclassify hybrid-format PDFs (e.g. exam sources
+        # with instruction pages that inflate word counts, causing an image-heavy
+        # document to be classified as text_rich). This gate gives the operator
+        # a chance to abort before extraction produces a wrong output.
+        # Pass --yes (auto_confirm=True) to skip in batch / scripted runs.
+        if not auto_confirm:
+            n = detection_result.total_questions
+            low_count = n < 3 or (original_page_count > 0 and n / original_page_count < 0.5)
+            if low_count:
+                logger.warning(
+                    f"      WARNING: only {n} block(s) detected from "
+                    f"{original_page_count} source pages. "
+                    "This may indicate a format classification error (e.g. "
+                    "a hybrid PDF wrongly classified as text_rich). "
+                    "Verify the source PDF format before proceeding."
+                )
+            if sys.stdin.isatty():
+                try:
+                    prompt_lines = [
+                        "",
+                        f"[MTS] --- Human Gate: Block Detection Complete ---",
+                        f"[MTS] Detected  : {n} question block(s)",
+                        f"[MTS] Source    : {original_page_count} pages  ({pdf_path.name})",
+                        f"[MTS] Format    : {'image_heavy' if detection_result.is_image_heavy else 'text_rich'}",
+                    ]
+                    if low_count:
+                        prompt_lines.append(
+                            f"[MTS] *** LOW COUNT — expected ~1 block per content page ***"
+                        )
+                    prompt_lines.append("[MTS] Proceed with extraction? [Y/n]: ")
+                    sys.stdout.write("\n".join(prompt_lines[:-1]) + "\n")
+                    sys.stdout.flush()
+                    answer = input(prompt_lines[-1]).strip().lower()
+                    if answer in ("n", "no"):
+                        logger.info("Run aborted by operator at question-count gate.")
+                        sys.exit(0)
+                except EOFError:
+                    # Non-interactive pipe context — continue silently
+                    pass
+
         # ── Step 2: Extract block images ──────────────────────────────────────
         logger.info("[2/4] Extracting question block images...")
         t2 = time.perf_counter()
@@ -281,47 +329,75 @@ def run_compact_source(
         add_question_numbers_effective = add_question_numbers
         if add_question_numbers_effective is None:
             add_question_numbers_effective = detection_result.is_image_heavy
-        packer = PdfPacker(
-            scale_factor=scale_factor,
-            max_pages=max_pages,
-            columns=columns,
-            max_block_pages=max_block_pages,
-            layout_log_path=layout_log_path,
-            add_question_numbers=add_question_numbers_effective,
-            question_start=question_start,
-        )
-        output_pdf_path = artifact_writer.bin_path(
-            f"{pdf_path.stem}_Compacted_{columns}col_{artifact_writer.run_id}.pdf"
-        )
-        output_page_count = packer.pack(extracted_blocks, output_pdf_path)
+
+        # Determine columns to produce (dual mode = both 1-col and 2-col)
+        _is_dual = columns == "dual"
+        _columns_list: list[int] = [1, 2] if _is_dual else [int(columns)]
+
+        packed_outputs: list[tuple[int, Path, int]] = []  # (col_count, pdf_path, page_count)
+        for _col in _columns_list:
+            packer = PdfPacker(
+                scale_factor=scale_factor,
+                max_pages=max_pages,
+                columns=_col,
+                max_block_pages=max_block_pages,
+                layout_log_path=layout_log_path,
+                add_question_numbers=add_question_numbers_effective,
+                question_start=question_start,
+            )
+            _out_pdf = artifact_writer.artifact_path(
+                f"{pdf_path.stem}_Compacted_{_col}col_{artifact_writer.run_id}.pdf"
+            )
+            _page_count = packer.pack(extracted_blocks, _out_pdf)
+            logger.info(f"      {_col}-col: {_page_count} pages -> {_out_pdf}")
+            packed_outputs.append((_col, _out_pdf, _page_count))
+
         tel.timings.record("pdf_packing", time.perf_counter() - t3)
-        logger.info(f"      Output: {output_page_count} pages -> {output_pdf_path}")
-        tel.stages["pdf_packing"] = {"output_page_count": output_page_count}
+        tel.stages["pdf_packing"] = {
+            "outputs": {str(c): pc for c, _, pc in packed_outputs}
+        }
 
         # ── Step 4: Generate reports ──────────────────────────────────────────
         logger.info("[4/4] Generating reports...")
         t4 = time.perf_counter()
-        output_size_bytes = output_pdf_path.stat().st_size
         reporter = Reporter()
-        boundary_map_md, report_md, passed = reporter.generate(
-            detection_result=detection_result,
-            original_page_count=original_page_count,
-            output_page_count=output_page_count,
-            original_size_bytes=original_size_bytes,
-            output_size_bytes=output_size_bytes,
-            source_filename=source_filename,
-            run_id=artifact_writer.run_id,
-            grade=grade,
-            subject=subject,
-            extracted_blocks=extracted_blocks,
-        )
-        artifact_writer.write(f"{pdf_path.stem}_source-boundary-map.md", boundary_map_md)
-        artifact_writer.write(f"{pdf_path.stem}_compaction-report.md", report_md)
+        passed = True
+        _boundary_map_written = False
+        for _col, output_pdf_path, output_page_count in packed_outputs:
+            output_size_bytes = output_pdf_path.stat().st_size
+            _col_label = f"_{_col}col" if _is_dual else ""
+            boundary_map_md, report_md, _col_passed = reporter.generate(
+                detection_result=detection_result,
+                original_page_count=original_page_count,
+                output_page_count=output_page_count,
+                original_size_bytes=original_size_bytes,
+                output_size_bytes=output_size_bytes,
+                source_filename=source_filename,
+                run_id=artifact_writer.run_id,
+                grade=grade,
+                subject=subject,
+                extracted_blocks=extracted_blocks,
+            )
+            if not _boundary_map_written:
+                _boundary_map_written = True
+                logger.info("")
+                logger.info(f"── Source Boundary Map: {pdf_path.stem} " + "─" * 20)
+                for line in boundary_map_md.splitlines():
+                    logger.info(line)
+            logger.info("")
+            logger.info(f"── Compaction Report: {pdf_path.stem}{_col_label} " + "─" * 20)
+            for line in report_md.splitlines():
+                logger.info(line)
+            if not _col_passed:
+                passed = False
         tel.timings.record("reporting", time.perf_counter() - t4)
         tel.stages["reporting"] = {"passed": passed}
 
         # ── Final result ──────────────────────────────────────────────────────
         verdict = "PASS" if passed else "FAIL"
+        # Use the last packed output (2-col in dual mode) for summary stats
+        _last_col, output_pdf_path, output_page_count = packed_outputs[-1]
+        output_size_bytes = output_pdf_path.stat().st_size
         pages_saved = original_page_count - output_page_count
         reduction = (
             round((pages_saved / original_page_count) * 100, 1) if original_page_count else 0.0
@@ -360,7 +436,20 @@ def run_compact_source(
         tel.verdict = verdict
         total_s = time.perf_counter() - run_start
         tel.timings.total_duration_s = total_s
-        tel.save(artifact_writer, pdf_path.stem)
+
+        # ── Consolidated log: pack layouts (read then delete the temp file) ────
+        if layout_log_path.exists():
+            logger.info("")
+            logger.info(f"── Pack Layouts: {pdf_path.stem} " + "─" * 20)
+            for line in layout_log_path.read_text(encoding="utf-8").splitlines():
+                logger.info(line)
+            layout_log_path.unlink(missing_ok=True)
+
+        # ── Consolidated log: telemetry (in-memory, no file written) ────────────
+        logger.info("")
+        logger.info(f"── Telemetry: {pdf_path.stem} " + "─" * 20)
+        for line in json.dumps(tel.to_dict(), indent=2).splitlines():
+            logger.info(line)
 
         def _fmt_duration(s: float) -> str:
             if s >= 60:
@@ -379,12 +468,14 @@ def run_compact_source(
             f"{_fmt_size(original_size_bytes)} -> {_fmt_size(output_size_bytes)} ({size_label})"
         )
         logger.info(f"Runtime:   {_fmt_duration(total_s)}")
-        logger.info(f"PDF:       {output_pdf_path}")
+        for _c, _p, _pc in packed_outputs:
+            logger.info(f"PDF ({_c}-col): {_p}")
         logger.info(f"Artifacts: {artifact_writer.run_path}")
 
         if not passed:
+            _report_suffix = f"_{_last_col}col" if _is_dual else ""
             logger.warning(
-                f"Review {pdf_path.stem}_compaction-report.md for failure details."
+                f"Review {pdf_path.stem}{_report_suffix}_compaction-report.md for failure details."
             )
             if shared_writer:
                 raise RuntimeError(f"FAIL:compaction")
@@ -422,14 +513,218 @@ def run_compact_source(
             _teardown_run_logging()
 
 
-def run_generate_worksheet(request_path: Path) -> None:
+def run_compact_source_reading(
+    pdf_path: Path,
+    grade: int,
+    subject: str,
+    artifact_writer: ArtifactWriter | None = None,
+    setup_logging: bool = True,
+) -> RunTelemetry:
     """
-    Execute the generate_worksheet pipeline. (Phase 3 — not yet implemented)
+    Execute the full compact_source_reading pipeline for a given ELA source PDF.
+
+    Pipeline steps:
+    1. PassageDetector  — locate passage groups using pdfplumber text extraction
+    2. PassageExtractor — render each page as a trimmed PNG image
+    3. ReadingPdfPacker — assemble page images into a compact output PDF
+    4. ReadingReporter  — validate integrity, write passage-map.md
+                          and compaction-report.md
+
+    Args:
+        pdf_path:      Path to the ELA source PDF.
+        grade:         Grade level.
+        subject:       Subject area (e.g. "reading", "ELA").
+        setup_logging: When True (default) attach/detach logging handlers.
+
+    Returns:
+        RunTelemetry record for this run.
+    """
+    if not pdf_path.exists():
+        raise FileNotFoundError(
+            f"PDF not found: '{pdf_path}'. Check the file path and try again."
+        )
+
+    shared_writer = artifact_writer is not None
+    if not shared_writer:
+        artifact_writer = ArtifactWriter(feature_name="reading_worksheet_generation_from_source")
+
+    if setup_logging:
+        _setup_run_logging(artifact_writer.artifact_path("run.log"))
+
+    run_start = time.perf_counter()
+
+    tel = RunTelemetry(
+        run_id=artifact_writer.run_id,
+        feature="compact_source_reading",
+        source_file=pdf_path.name,
+        source_path=str(pdf_path.resolve()),
+        parameters={"grade": grade, "subject": subject},
+    )
+
+    try:
+        logger.info("")
+        logger.info(f"compact_source_reading — {pdf_path.name}")
+        logger.info(f"Grade: {grade} | Subject: {subject}")
+        logger.info(f"Run ID: {artifact_writer.run_id}")
+        logger.info(f"Artifacts: {artifact_writer.run_path}")
+        logger.info("")
+
+        original_page_count = get_page_count(pdf_path)
+        original_size_bytes = pdf_path.stat().st_size
+        logger.info(f"Source: {original_page_count} pages")
+
+        tel.source_stats = {
+            "page_count": original_page_count,
+            "size_bytes": original_size_bytes,
+        }
+
+        # ── Step 1: Detect passage groups ─────────────────────────────────────
+        logger.info("[1/4] Detecting passage groups...")
+        t1 = time.perf_counter()
+        detector = PassageDetector()
+        detection_result = detector.detect(pdf_path)
+        tel.timings.record("passage_detection", time.perf_counter() - t1)
+
+        if detection_result.total_passages == 0:
+            tel.add_defect(
+                stage="passage_detection",
+                severity="error",
+                code="ZERO_PASSAGES_DETECTED",
+                message="No passage groups detected in the source PDF.",
+            )
+
+        logger.info(
+            f"      {detection_result.total_passages} passage group(s) detected, "
+            f"{detection_result.total_question_pages} question page(s)"
+        )
+        tel.stages["passage_detection"] = {
+            "total_passages": detection_result.total_passages,
+            "total_question_pages": detection_result.total_question_pages,
+        }
+
+        # ── Step 2: Extract page images ───────────────────────────────────────
+        logger.info("[2/4] Extracting page images...")
+        t2 = time.perf_counter()
+        extractor = PassageExtractor()
+        extracted_groups = extractor.extract(pdf_path, detection_result.groups)
+        total_pages_extracted = sum(len(g.pages) for g in extracted_groups)
+        tel.timings.record("page_extraction", time.perf_counter() - t2)
+        logger.info(f"      {total_pages_extracted} page image(s) extracted")
+        tel.stages["page_extraction"] = {"total_pages": total_pages_extracted}
+
+        # ── Step 3: Pack into output PDF ──────────────────────────────────────
+        logger.info("[3/4] Packing pages into output PDF...")
+        t3 = time.perf_counter()
+        packer = ReadingPdfPacker()
+        output_pdf_path = artifact_writer.artifact_path(
+            f"{pdf_path.stem}_Compacted_{artifact_writer.run_id}.pdf"
+        )
+        output_page_count, groups_written = packer.pack(extracted_groups, output_pdf_path)
+        tel.timings.record("pdf_packing", time.perf_counter() - t3)
+        logger.info(f"      Output: {output_page_count} pages -> {output_pdf_path}")
+        tel.stages["pdf_packing"] = {
+            "output_page_count": output_page_count,
+            "groups_written": groups_written,
+        }
+
+        # ── Step 4: Generate reports ──────────────────────────────────────────
+        logger.info("[4/4] Generating reports...")
+        t4 = time.perf_counter()
+        output_size_bytes = output_pdf_path.stat().st_size
+        reporter = ReadingReporter()
+        passage_map_md, report_md, passed = reporter.generate(
+            detection_result=detection_result,
+            extracted_groups=extracted_groups,
+            original_page_count=original_page_count,
+            output_page_count=output_page_count,
+            source_filename=pdf_path.name,
+            run_id=artifact_writer.run_id,
+            grade=grade,
+            subject=subject,
+            original_size_bytes=original_size_bytes,
+            output_size_bytes=output_size_bytes,
+        )
+        artifact_writer.write(f"{pdf_path.stem}_passage-map.md", passage_map_md)
+        artifact_writer.write(f"{pdf_path.stem}_compaction-report.md", report_md)
+        tel.timings.record("reporting", time.perf_counter() - t4)
+        tel.stages["reporting"] = {"passed": passed}
+
+        # ── Final result ──────────────────────────────────────────────────────
+        verdict = "PASS" if passed else "FAIL"
+        pages_saved = original_page_count - output_page_count
+        reduction = (
+            round((pages_saved / original_page_count) * 100, 1)
+            if original_page_count else 0.0
+        )
+
+        def _fmt_size(b: int) -> str:
+            return f"{b / 1_048_576:.1f} MB" if b >= 1_048_576 else f"{b / 1024:.0f} KB"
+
+        size_delta = original_size_bytes - output_size_bytes
+        size_pct = (
+            round(abs(size_delta) / original_size_bytes * 100, 1)
+            if original_size_bytes else 0.0
+        )
+        size_label = (
+            f"{_fmt_size(abs(size_delta))} saved, {size_pct}% reduction"
+            if size_delta >= 0
+            else f"{_fmt_size(abs(size_delta))} larger (raster images)"
+        )
+
+        tel.output_stats = {
+            "page_count": output_page_count,
+            "size_bytes": output_size_bytes,
+            "pages_saved": pages_saved,
+            "size_bytes_saved": size_delta,
+        }
+        tel.verdict = verdict
+        total_s = time.perf_counter() - run_start
+        tel.timings.total_duration_s = total_s
+        tel.save(artifact_writer, pdf_path.stem)
+
+        def _fmt_duration(s: float) -> str:
+            if s >= 60:
+                m = int(s) // 60
+                sec = s - m * 60
+                return f"{m}m {sec:.1f}s"
+            return f"{s:.1f}s"
+
+        logger.info("")
+        logger.info(f"Result: {verdict}")
+        logger.info(
+            f"{original_page_count} pages -> {output_page_count} pages "
+            f"({pages_saved} saved, {reduction}% reduction)"
+        )
+        logger.info(
+            f"{_fmt_size(original_size_bytes)} -> {_fmt_size(output_size_bytes)} ({size_label})"
+        )
+        logger.info(f"Runtime:   {_fmt_duration(total_s)}")
+        logger.info(f"PDF:       {output_pdf_path}")
+        logger.info(f"Artifacts: {artifact_writer.run_path}")
+
+        if not passed:
+            logger.warning(
+                f"Review {pdf_path.stem}_compaction-report.md for failure details."
+            )
+            if shared_writer:
+                raise RuntimeError("FAIL:compaction")
+            sys.exit(1)
+
+        return tel
+
+    finally:
+        if setup_logging:
+            _teardown_run_logging()
+
+
+def run_generate_math_worksheet(request_path: Path) -> None:
+    """
+    Execute the generate_math_worksheet pipeline. (Phase 3 — not yet implemented)
 
     Args:
         request_path: Path to the worksheet request JSON file.
     """
-    logger.info("generate_worksheet mode is Phase 3 — not yet implemented.")
+    logger.info("generate_math_worksheet mode is Phase 3 — not yet implemented.")
     logger.info(f"Request file provided: {request_path}")
     sys.exit(1)
 
@@ -441,8 +736,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python -m src.orchestrator compact_source --pdf docs/exams/exam.pdf\n"
-            "  python -m src.orchestrator generate_worksheet "
+            "  python -m src.orchestrator compact_source_math --pdf docs/exams/math/exam.pdf\n"
+            "  python -m src.orchestrator compact_source_reading --pdf docs/exams/reading/exam.pdf\n"
+            "  python -m src.orchestrator generate_math_worksheet "
             "--request requests/worksheet-request.json\n"
         ),
     )
@@ -450,7 +746,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     compact_parser = subparsers.add_parser(
-        "compact_source",
+        "compact_source_math",
         help="Compact a source worksheet PDF into a print-efficient PDF",
     )
     compact_parser.add_argument(
@@ -482,8 +778,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     compact_parser.add_argument(
-        "--columns", type=int, default=1, choices=[1, 2],
-        help="Number of columns in the output layout (1 or 2, default 1).",
+        "--columns",
+        type=lambda v: "dual" if v == "dual" else int(v),
+        default="dual",
+        metavar="{1,2,dual}",
+        help="Number of columns in the output layout (1, 2, or dual). Default: dual (generates both 1-col and 2-col PDFs in a single run).",
     )
     compact_parser.add_argument(
         "--max-block-pages", type=int, default=None,
@@ -518,6 +817,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     compact_parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help=(
+            "Skip the human question-count confirmation gate after block detection. "
+            "Use in batch or scripted runs where an operator is not present to confirm."
+        ),
+    )
+    compact_parser.add_argument(
         "--compare", action="store_true",
         help="Run visual comparison against a golden sample after packing (requires --golden or --golden-dir).",
     )
@@ -533,8 +839,25 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    reading_parser = subparsers.add_parser(
+        "compact_source_reading",
+        help="Compact an ELA / Reading source PDF into a print-efficient PDF",
+    )
+    reading_parser.add_argument(
+        "--pdf", type=Path, required=True,
+        help="Path to the ELA source PDF.",
+    )
+    reading_parser.add_argument(
+        "--grade", type=int, required=True,
+        help="Grade level (e.g. 3).",
+    )
+    reading_parser.add_argument(
+        "--subject", type=str, default="reading",
+        help="Subject label (default: reading).",
+    )
+
     worksheet_parser = subparsers.add_parser(
-        "generate_worksheet",
+        "generate_math_worksheet",
         help="Generate an MTS worksheet from a source document (Phase 3)",
     )
     worksheet_parser.add_argument(
@@ -550,7 +873,7 @@ def main() -> None:
     parser = build_argument_parser()
     args = parser.parse_args()
 
-    if args.mode == "compact_source":
+    if args.mode == "compact_source_math":
         pdf_input: Path = args.pdf
 
         if pdf_input.is_dir():
@@ -560,7 +883,7 @@ def main() -> None:
                 sys.exit(1)
 
             shared_writer = ArtifactWriter()
-            _setup_run_logging(shared_writer.bin_path("run.log"))
+            _setup_run_logging(shared_writer.artifact_path("run.log"))
             batch_start = time.perf_counter()
             try:
                 logger.info(f"Folder mode — {len(pdf_files)} PDF(s) found in '{pdf_input}'")
@@ -586,7 +909,7 @@ def main() -> None:
                     file_start = time.perf_counter()
                     file_status = "PASS"
                     try:
-                        tel = run_compact_source(
+                        tel = run_compact_source_math(
                             pdf_path=pdf_file,
                             grade=args.grade,
                             subject=args.subject,
@@ -601,6 +924,7 @@ def main() -> None:
                             setup_logging=False,
                             add_question_numbers=False if args.no_question_numbers else None,
                             question_start=args.question_start,
+                            auto_confirm=args.yes,
                         )
                         results.append((pdf_file.name, "PASS", time.perf_counter() - file_start))
                         telemetry_records.append(tel.to_dict())
@@ -693,7 +1017,7 @@ def main() -> None:
                 _teardown_run_logging()
 
         else:
-            run_compact_source(
+            run_compact_source_math(
                 pdf_path=pdf_input,
                 grade=args.grade,
                 subject=args.subject,
@@ -706,9 +1030,16 @@ def main() -> None:
                 golden=args.golden,
                 add_question_numbers=False if args.no_question_numbers else None,
                 question_start=args.question_start,
+                auto_confirm=args.yes,
             )
-    elif args.mode == "generate_worksheet":
-        run_generate_worksheet(request_path=args.request)
+    elif args.mode == "compact_source_reading":
+        run_compact_source_reading(
+            pdf_path=args.pdf,
+            grade=args.grade,
+            subject=args.subject,
+        )
+    elif args.mode == "generate_math_worksheet":
+        run_generate_math_worksheet(request_path=args.request)
 
 
 if __name__ == "__main__":

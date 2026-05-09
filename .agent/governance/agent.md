@@ -31,6 +31,7 @@ These rules apply regardless of agent type:
 3. **Every run produces artifacts.** Nothing is a black box. If it ran, it left a trace.
 4. **Student-first standard.** Any output that would confuse, mislead, or discourage a student fails — regardless of technical correctness.
 5. **Ask before assuming.** When the spec is unclear or the input is ambiguous, flag it and request clarification rather than guessing.
+6. **Human gate after block detection.** Every `compact_source_math` run MUST pause after Stage 2 (block detection) to allow a human operator to validate the detected question count before extraction begins. A count that is suspiciously low (< 3 blocks, or < 0.5 blocks per source page) MUST trigger a visible `WARNING` message regardless of whether the gate is bypassed. The gate MAY be bypassed only when `--yes` is explicitly passed (batch/scripted runs) or when stdin is non-interactive. No pipeline may silently extract and pack a near-empty block set.
 
 ---
 
@@ -311,6 +312,85 @@ The agent does not wait to be asked. Updating the docs is as much a deliverable 
 
 ---
 
+## 8. Post-Generation QA Loop (Coding Agent — compact_source_math)
+
+After every generation run — single file or batch — the coding agent **must** execute the QA scenarios defined in `.agent/specs/compact_source/qa-scenarios.md` before reporting the run complete. This is not optional.
+
+### 8.1 When the Loop Runs
+
+The post-generation QA loop is triggered after:
+- Any `compact_runner.py` batch invocation — **`compact_runner.py` runs the programmatic QA checks automatically and prints the QA table; the agent reads this output**
+- Any single-file `orchestrator` run
+- Any code change to `block_detector.py`, `block_extractor.py`, `pdf_packer.py`, or `reporter.py`
+
+The VERIFY step in `bug-fix-workflow.md` (all fix classes) requires completing this loop. See `bug-fix-workflow.md §9` for the standard invocation command.
+
+### 8.2 Loop Steps
+
+```
+1. Run generation
+2. Execute all QA scenarios from qa-scenarios.md
+3. Collect PASS / FAIL for each scenario
+4. If all PASS → generation is complete. Report results and stop.
+5. If any FAIL:
+   a. Triage all failures (see §8.3)
+   b. Fix highest-priority defect first (apply fix classification from §7.0)
+   c. Re-run generation on the affected input(s)
+   d. Re-run all QA scenarios
+   e. Repeat from step 3 — maximum 3 fix iterations
+6. If failures persist after 3 iterations → escalate to human. Do not loop again.
+```
+
+### 8.3 Defect Triage — Priority Assignment
+
+Assign priority before fixing. Do not start coding until priority is assigned.
+
+| Priority | Condition | Action |
+|----------|-----------|--------|
+| **P1 — Blocker** | Output is blank, truncated, or missing questions; text visibly cut off; infinite loop; run crashes | Fix immediately before anything else. Do not deliver the output. |
+| **P2 — Major** | Wrong question count (outside DET tolerance); image resolution below threshold; page reduction implausible; split block detected | Fix before delivery. Output may be inspected but is not deliverable. |
+| **P3 — Minor** | Run folder has unexpected files; log section missing; runtime slightly over threshold but run completes | Fix in the same session if fast. Deliver output with a logged note. |
+| **P4 — Observation** | Heuristic check flagged a possible issue but visual inspection confirms it is acceptable | Log in `bugs.md` as `open` with low priority. Do not block delivery. |
+
+**P1 and P2 failures block delivery.** The agent must not hand off or present output to the user until all P1 and P2 scenarios pass.
+
+### 8.4 Scenario-to-Priority Mapping
+
+| Scenario | Default Priority |
+|----------|------------------|
+| QA-DET-01 / 02 / 03 (block count) | P1 if count = 0; P2 if outside tolerance |
+| QA-DET-04 (no vision fallback) | P3 |
+| QA-EXT-01 (extracted = detected) | P2 |
+| QA-EXT-02 (image resolution) | P2 |
+| QA-EXT-03 (no text cut off) | P1 if visually confirmed; P4 if heuristic only |
+| QA-PACK-01 (no infinite loop) | P1 |
+| QA-PACK-02 (2-col < 1-col pages) | P2 |
+| QA-PACK-03 (no blank output) | P1 |
+| QA-PACK-04 (clean run folder) | P3 |
+| QA-PACK-05 (no split blocks) | P2 if confirmed; P4 if heuristic only |
+| QA-REP-01 (Result: PASS all files) | P1 |
+| QA-REP-02 (page reduction plausible) | P2 |
+| QA-REP-03 (run.log complete) | P3 |
+| QA-E2E-01 (full batch) | P1 if any sub-check is P1; otherwise P2 |
+
+### 8.5 Fix Iteration Budget
+
+- **3 iterations maximum.** If the same scenario fails on the third re-run, stop, log the bug as `in-progress`, and escalate to the human with a clear description of what was tried and why it did not resolve.
+- Each iteration must fix at least one failing scenario. If no progress is made after an iteration, escalate immediately — do not spend iterations on approaches that are not converging.
+- Re-running all QA scenarios after each fix (not just the one that failed) is required. A fix must not introduce new failures.
+
+### 8.6 Reporting After the Loop
+
+When the loop completes (all PASS or escalation), report to the human:
+
+1. **QA table** — all scenario IDs with PASS / FAIL
+2. **Run folder** path
+3. **Fixes applied** (if any) — scenario ID → root cause → fix summary
+4. **Open issues** (P3 / P4) — logged but not blocking
+5. **Delivery verdict** — `DELIVERABLE` (all P1/P2 pass) or `ESCALATE` (P1/P2 open after 3 iterations)
+
+---
+
 ### Authority chain for this protocol
 
 ```
@@ -347,6 +427,18 @@ If any answer is NO, the output is not complete.
 ---
 
 ## 7. Bug and Improvement Logging (Coding Agent)
+
+### 7.0 Fix Classification (Required First Step)
+
+Before fixing any bug, the coding agent must classify it and state the classification explicitly. See **`.agent/governance/bug-fix-workflow.md`** for the full workflow.
+
+| Class | When | Required steps |
+|-------|------|---------------|
+| **Simple** | Isolated, 1–5 lines, no logic change | State → Edit → Verify |
+| **Moderate** | Logic change in one component, cause is clear | Understand → Strategize → Implement → Verify (POC optional) |
+| **Deep** | Logic, control flow, architecture, or subtle failure mode | Understand → Strategize → POC → Implement → Verify |
+
+**When in doubt, go one class higher.** Never skip to code on a Moderate or Deep fix.
 
 ### 7.1 When to Log a Bug
 

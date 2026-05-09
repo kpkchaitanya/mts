@@ -26,9 +26,9 @@ flowchart TD
     V --> S1
 
     subgraph S1BOX["Stage 1 — block_detector.py  _classify_format()"]
-        S1A[Sample first 10 non-blank pages\ncount words per page]
-        S1A --> S1B{avg words/page\n< 10?}
-        S1B -->|Yes| S1C[format: image_heavy\nEOG-style]
+        S1A[Sample first 10 content pages\ncount words per page\nfraction-based majority vote]
+        S1A --> S1B{>= 50% of sampled pages\nhave <= 5 words?}
+        S1B -->|Yes| S1C[format: image_heavy\nEOG-style / NY released-test]
         S1B -->|No| S1D[format: text_rich\nSTAAR-style]
         S1C --> S1OUT([format detected])
         S1D --> S1OUT
@@ -47,7 +47,15 @@ flowchart TD
         S2OUT[BlockDetectionResult\nlist of QuestionBlock\neach with PageSlice list]
     end
 
-    S2OUT --> S3
+    S2OUT --> HG
+
+    subgraph HGBOX["Human Gate — orchestrator.py (interactive mode)"]
+        HG[Show detected count\nformat + low-count warning]
+        HG --> HG2{auto_confirm=True\nor non-interactive stdin?}
+        HG2 -->|Yes — skip| S3
+        HG2 -->|No — prompt| HG3[Operator: Y to continue\nn to abort]
+        HG3 --> S3
+    end
 
     subgraph S3BOX["Stage 3 — block_extractor.py  BlockExtractor.extract()  →  list of ExtractedBlock"]
         S3A[Open PDF once\nfitz.open]
@@ -88,6 +96,7 @@ flowchart TD
 
     style S1BOX fill:#dbeafe,stroke:#3b82f6
     style S2BOX fill:#e0f2fe,stroke:#0ea5e9
+    style HGBOX fill:#fff7ed,stroke:#f59e0b
     style S3BOX fill:#fef9e7,stroke:#f0c040
     style S4BOX fill:#f4ecf7,stroke:#8e44ad
     style S5BOX fill:#eafaf1,stroke:#2ecc71
@@ -105,9 +114,9 @@ flowchart TD
 
     B[Sample first 10 non-blank pages\ncount words per page\nIMAGE_HEAVY_SAMPLE_PAGES = 10]
 
-    B --> C{avg words/page\n< 10?\nIMAGE_HEAVY_AVG_WORDS_THRESHOLD}
+    C{>= 50% of sampled pages\nhave <= 5 words?\nIMAGE_HEAVY_MIN_FRACTION}
 
-    C -->|Yes — EOG-style| IH[Format: image_heavy]
+    C -->|Yes — EOG/NY-style| IH[Format: image_heavy]
     C -->|No — STAAR-style| TR[Format: text_rich]
 
     IH --> IH1[_find_answer_key_fence\nscan pages for 'answer' + 'key'\nreturn first matching page index]
@@ -131,7 +140,9 @@ flowchart TD
     TR6 -->|Yes| TR7[Finalize blocks\napply BLOCK_BOTTOM_PADDING]
     TR6 -->|No — fallback| TR8[Claude Vision\nrender pages as images\nsend to API for Q1 location]
     TR8 --> TR7
-    TR7 --> IH6
+    TR7 --> TR9[_expand_blocks_for_vector_choices\nextend y_bottom past PyMuPDF drawings\nextending beyond current boundary]
+    TR9 --> TR10[_trim_constructed_response_blocks\nscan for CR_TRIM_MARKERS below stem\nset y_bottom = trim_y + 2 × CR_LINE_HEIGHT_PTS]
+    TR10 --> IH6
 
     style IH fill:#e8f4f8,stroke:#4a9eca
     style TR fill:#fef9e7,stroke:#f0c040
@@ -346,6 +357,36 @@ flowchart TD
 ## 6. Phase Delivery Log
 
 Each phase that touches `compact_source` adds a section here. Platform-level design (schemas, class structure, logging wiring) stays in `platform/` — only what is compact_source-specific is recorded below.
+
+---
+
+### 6.6 Format Classification Fix + Human Question-Count Gate
+
+**Date:** 2026-05-08
+**Bug:** BUG-005 (NY released-test PDFs misclassified as `text_rich`; only 2 false-positive blocks detected instead of 28 real questions)
+**Status:** fix-applied
+
+#### Root Cause
+
+The `_classify_format` sampler used an **average** word count across the first 10 pages. NY released-test PDFs have 2–3 word-rich instruction/cover pages followed by image-heavy question pages. The instruction pages inflated the average above `IMAGE_HEAVY_AVG_WORDS_THRESHOLD`, causing a `text_rich` classification. In the `text_rich` path, `QUESTION_LINE_PATTERN` matched `"2023 Released"` (year digit string + uppercase letter) and "44" from an answer-key footer — yielding 2 false-positive blocks instead of 28 real questions.
+
+#### Changes
+
+| Module | Change |
+|--------|--------|
+| `src/compact_source_math/block_detector.py` | `_classify_format`: changed from average-based to **fraction-based majority vote**. New constant `IMAGE_HEAVY_MIN_FRACTION = 0.5`. If ≥50% of sampled pages have ≤5 words → `image_heavy`. |
+| `src/orchestrator.py` | Added **human question-count gate** after Stage 2. Gate displays detected count, source page count, format, and low-count warning. Operator confirms `[Y/n]` before extraction proceeds. Added `auto_confirm: bool = False` parameter and `--yes`/`-y` CLI flag to skip gate in batch/scripted runs. |
+| `scripts/compact_runner.py` | Fixed mode name `compact_source` → `compact_source_math`. Added `--yes` flag to runner subprocess calls so the orchestrator gate is bypassed (runner provides its own interactive loop). |
+
+#### Verification
+
+```bash
+python -m src.orchestrator compact_source_math \
+  --pdf "docs/exams/2026-EOGs/math/05_08_2026/NY_Math_Grade4_2023_Released_Test_Questions.pdf" \
+  --grade 4 --subject Math
+```
+
+Expected: Human gate prompts after detection. Detected count MUST be ~28 blocks (not 2). Gate shows `[Y/n]` prompt. On `Y`, extraction and packing proceed normally.
 
 ---
 

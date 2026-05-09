@@ -24,16 +24,28 @@ Boundary detection strategy:
 """
 
 import json
+import logging
 import re
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+_logger = logging.getLogger("mts")
+
+# Maximum seconds allowed for pdfminer to parse a single page.
+# Some PDFs contain malformed content streams that cause pdfminer to spin
+# indefinitely; pages that exceed this budget are skipped.
+_PAGE_PARSE_TIMEOUT_S = 10
 
 import pdfplumber
 import fitz  # PyMuPDF — used in _detect_image_heavy_blocks for content bbox queries
 
 from src.config import (
+    CR_BLANK_GAP_THRESHOLD,
+    CR_BLANK_LINES_KEEP,
+    CR_LINE_HEIGHT_PTS,
     MAX_QUESTION_SPAN_PAGES,
     MAX_VISION_SCAN_PAGES,
     MIN_CONTENT_PAGE,
@@ -63,7 +75,33 @@ QUESTION_LINE_PATTERN = re.compile(
 # The letter must be immediately at the start of the line (after optional
 # whitespace) to avoid matching mid-line occurrences.
 ANSWER_CHOICE_PATTERN = re.compile(r"^\s*[A-DFGHJ](?:[\.\)]\s|\s)")
+# Matches a standalone question number on its own line, as used in
+# NY released-test format (e.g., NY Grades 3–8 Mathematics assessments).
+# In this format the question number appears as a sidebar label on a line
+# by itself, positioned 6–10 pts below the first line of the question stem:
+#
+#   "What is the product of 432 and 6 ?"   ← stem line  (y=278)
+#   "5"                                    ← number line (y=284)
+#   "A  2,482"                             ← first choice
+#
+# Pattern captures 1–2 digit numbers (question numbers are typically 1–30)
+# on a line that contains NOTHING else (after stripping whitespace).
+# False-positive numbers embedded in content (e.g., fractions, equations)
+# are eliminated by Pass 1 validation which requires adjacent A/B/C/D choices.
+NY_SIDEBAR_NUMBER_PATTERN = re.compile(r"^\s*(\d{1,2})\s*$")
 
+# Maximum vertical distance (PDF points) between the NY sidebar number line
+# and the stem line immediately above it.  The offset in released NY PDFs is
+# consistently 6–7 pts.  The lookahead is set to 20 pts to tolerate font or
+# layout variation without catching unrelated number lines on the same page.
+NY_NUMBER_STEM_LOOKAHEAD_PTS: float = 20.0
+
+# Maximum x0 (distance from left page edge, in PDF points) for a standalone
+# number to be treated as an NY sidebar question marker.  Real question numbers
+# appear in the narrow left sidebar (x0 ≈ 42–56 pts).  Numbers embedded in
+# problem text — fractions, inline answers, page labels — appear at x0 ≥ 79.
+# A threshold of 72 (1 inch) cleanly separates the two populations.
+NY_SIDEBAR_MAX_X_PTS: float = 72.0
 # ─── Padding Constants ────────────────────────────────────────────────────────
 
 # Small upward offset so the crop starts just above the question number marker.
@@ -83,6 +121,48 @@ LINE_Y_TOLERANCE: float = 3.0
 # numbered reference entries (unit conversions, numbered instructions, etc.).
 MIN_QUESTION_HEIGHT_PTS: float = 80.0
 
+# Minimum vertical gap (PDF points) between a block's text-based y_bottom and
+# the bottom of detected drawings on the same page before the drawing-expansion
+# pass will extend the block's y_bottom.  Small gaps (< 20 pts) are typically
+# decorative underlines or grid lines; large gaps indicate answer-choice diagrams
+# that extend well below their letter labels.
+VECTOR_EXPANSION_MIN_GAP_PTS: float = 20.0
+
+# Fraction of page area (width × height) that a single embedded raster image
+# must cover for the page to be treated as a full-page image block in a
+# mixed-format text_rich document.  0.85 = 85% of the page area — this allows
+# for small white borders around scanned question images.
+MIXED_FORMAT_IMAGE_MIN_COVERAGE: float = 0.85
+
+# Maximum pixel standard deviation (0–255 range) of a downsampled page render
+# for the page to be treated as a question page in a mixed-format document.
+#
+# Black-text-on-white question pages have low std-dev (~10) because most pixels
+# are near-white with occasional near-black text pixels.  Colorful cover pages,
+# session header pages, and instruction pages with background fills have high
+# std-dev (~40+) due to color variation.  A threshold of 25 reliably separates
+# the two groups without needing any color-specific logic.
+MIXED_FORMAT_IMAGE_MAX_PIXEL_STDDEV: float = 25.0
+
+# ─── Constructed-Response Trimming ───────────────────────────────────────────
+
+# Lowercase prefix strings that mark the start of a constructed-response work
+# area.  When any line in a block starts with one of these strings (after
+# case-folding and stripping), the block's y_bottom is trimmed to just below
+# that line + CR_BLANK_LINES_KEEP * CR_LINE_HEIGHT_PTS.
+#
+# Matching is startswith() so "Answer ___" and "Answer the question" both
+# match "answer".  This produces a known false positive when a stem asks
+# "Answer the following..." — accepted as a v1 trade-off (EC-CR-03).
+CR_TRIM_MARKERS: list[str] = [
+    "answer",
+    "show your work",
+    "explain",
+    "describe",
+    "justify",
+    "write your answer",
+]
+
 # ─── Format Auto-detection ────────────────────────────────────────────────────
 
 # Number of content pages sampled to classify PDF format.
@@ -91,7 +171,23 @@ IMAGE_HEAVY_SAMPLE_PAGES: int = 10
 # If the sampled content pages average fewer than this many words, the PDF is
 # classified as image-heavy (one visual question per page, e.g. EOG format).
 # STAAR pages average 50-200 words; EOG question pages average ~3 words.
+# NOTE: IMAGE_HEAVY_AVG_WORDS_THRESHOLD is retained for reference but is no longer
+# used by _classify_format. Classification now uses IMAGE_HEAVY_MIN_FRACTION (majority
+# vote) which is robust to PDFs that mix cover/instruction pages (word-rich) with
+# image-heavy question pages — a pattern seen in NY released test PDFs.
 IMAGE_HEAVY_AVG_WORDS_THRESHOLD: int = 10
+
+# Fraction of sampled content pages that must have at most IMAGE_HEAVY_PAGE_MAX_WORDS
+# words for the PDF to be classified as 'image_heavy'. Using a fraction (majority vote)
+# instead of an average prevents instruction/cover pages from skewing the classification.
+#
+# Example: an NY released-test PDF with 3 instruction pages (word-rich) and 7 question
+# pages (image-only, ≤5 words) in the first 10 sampled pages → fraction = 0.70 ≥ 0.5
+# → correctly classified as 'image_heavy'.
+#
+# A STAAR PDF where all 10 sampled pages are word-rich → fraction = 0.00 < 0.5
+# → correctly classified as 'text_rich'.
+IMAGE_HEAVY_MIN_FRACTION: float = 0.5
 
 # A content page is counted as image-heavy if it has at most this many words.
 # EOG question pages carry just "N of 40" (3 words) as a footer.
@@ -235,8 +331,16 @@ class BlockDetector:
         if fmt == "image_heavy":
             return self._detect_image_heavy_blocks(pdf_path, page_heights, page_widths)
 
+        # Apply the answer key fence to the text_rich path so that answer key
+        # pages (common in released test PDFs) are excluded from marker scanning.
+        total_pages = len(page_heights)
+        fence = self._find_answer_key_fence(pdf_path, total_pages)
+
         # All markers, not yet deduplicated — dedup happens after validation
         all_markers = self._find_all_question_markers(pdf_path)
+
+        # Filter out markers on or after the answer key fence page.
+        all_markers = [m for m in all_markers if m.page_number < fence]
         used_vision = False
 
         if not all_markers:
@@ -261,6 +365,34 @@ class BlockDetector:
                 "with choices in text (A/B/C/D or F/G/H/J)."
             )
 
+        # In mixed-format documents (e.g. NY released tests), some pages are
+        # raster images with no extractable text — pdfplumber returns 0 words.
+        # Add full-page blocks for those pages so their questions are not lost.
+        image_blocks = self._find_mixed_format_image_blocks(
+            pdf_path, page_heights, fence
+        )
+        if image_blocks:
+            all_pages_covered = {s.page_number for b in blocks for s in b.slices}
+            new_image_blocks = [
+                b for b in image_blocks
+                if b.slices[0].page_number not in all_pages_covered
+            ]
+            if new_image_blocks:
+                blocks = sorted(
+                    blocks + new_image_blocks,
+                    key=lambda b: (b.slices[0].page_number, b.slices[0].y_top),
+                )
+
+        # Expand y_bottom to include vector-drawn answer choice diagrams (e.g. NY
+        # released-test geometry questions where A/B/C/D options are drawings, not
+        # text).  This is a no-op for purely text-choice exams (STAAR).
+        blocks = self._expand_blocks_for_vector_choices(pdf_path, blocks, page_heights)
+
+        # Trim constructed-response blocks: shorten y_bottom to just below the
+        # first "Answer"/"Explain"/"Show your work" line + 2 blank lines, so the
+        # compacted output does not waste space on large blank work areas.
+        blocks = self._trim_constructed_response_blocks(pdf_path, blocks)
+
         return BlockDetectionResult(
             blocks=blocks,
             total_questions=len(blocks),
@@ -276,23 +408,35 @@ class BlockDetector:
         Classify the PDF as 'text_rich' or 'image_heavy' by sampling content pages.
 
         Samples up to IMAGE_HEAVY_SAMPLE_PAGES pages starting at MIN_CONTENT_PAGE.
-        If the average word count across sampled pages is below
-        IMAGE_HEAVY_AVG_WORDS_THRESHOLD, the format is 'image_heavy'.
+        Uses a fraction-based majority vote: if at least IMAGE_HEAVY_MIN_FRACTION
+        of sampled pages have at most IMAGE_HEAVY_PAGE_MAX_WORDS words, the format
+        is classified as 'image_heavy'.
+
+        This approach is robust to PDFs that mix word-rich cover/instruction pages
+        with image-heavy question pages (e.g. NY released test format), where a
+        simple average would inflate the word count and produce a wrong classification.
 
         Returns:
             'image_heavy' or 'text_rich'
         """
-        total_words = 0
+        # Count how many sampled pages qualify as image-heavy (≤ max words per page).
+        # Each qualifying page represents one image-based question page.
+        image_heavy_page_count = 0
         pages_sampled = 0
         with pdfplumber.open(pdf_path) as pdf:
             sample_end = min(MIN_CONTENT_PAGE + IMAGE_HEAVY_SAMPLE_PAGES, len(pdf.pages))
             for page_idx in range(MIN_CONTENT_PAGE, sample_end):
-                total_words += len(pdf.pages[page_idx].extract_words())
+                word_count = len(pdf.pages[page_idx].extract_words())
+                # A page qualifies as image-heavy when its word count falls at or below
+                # IMAGE_HEAVY_PAGE_MAX_WORDS (default 5). Blank pages (0 words) are
+                # included in the count; they are already excluded by _detect_image_heavy_blocks.
+                if word_count <= IMAGE_HEAVY_PAGE_MAX_WORDS:
+                    image_heavy_page_count += 1
                 pages_sampled += 1
         if pages_sampled == 0:
             return "text_rich"
-        avg = total_words / pages_sampled
-        return "image_heavy" if avg < IMAGE_HEAVY_AVG_WORDS_THRESHOLD else "text_rich"
+        fraction = image_heavy_page_count / pages_sampled
+        return "image_heavy" if fraction >= IMAGE_HEAVY_MIN_FRACTION else "text_rich"
 
     def _find_answer_key_fence(self, pdf_path: Path, total_pages: int) -> int:
         """
@@ -454,6 +598,19 @@ class BlockDetector:
         """
         Scan all pages for question number markers using word y-coordinates.
 
+        Supports two question numbering formats:
+
+        STAAR-style (standard): question number leads the line.
+            Example: "1. Which of the following ..."
+            Detected by QUESTION_LINE_PATTERN.
+
+        NY released-test style (sidebar number): the question number appears
+        on its own line just below the first line of the stem (6–10 pts gap).
+            Example: stem line "What is the product of 432 and 6?" at y=278,
+                     then "5" on its own line at y=284.
+            Detected by NY_SIDEBAR_NUMBER_PATTERN; y_top is walked back to the
+            stem line above the number (within NY_NUMBER_STEM_LOOKAHEAD_PTS).
+
         Returns all markers sorted by document order (page, then y_top).
         Does NOT deduplicate — duplicate question numbers are removed later
         in _build_blocks, after non-question markers have been filtered out.
@@ -467,7 +624,31 @@ class BlockDetector:
                 # Skip cover and instruction pages before question content starts
                 if page_idx < MIN_CONTENT_PAGE:
                     continue
-                for y_top, _y_bottom, line_text in _extract_lines_with_coords(page):
+
+                # Extract all lines for this page so we can look backwards for
+                # the NY-style stem line that precedes a sidebar number.
+                _ex = ThreadPoolExecutor(max_workers=1)
+                try:
+                    lines = _ex.submit(
+                        _extract_lines_with_coords, page
+                    ).result(timeout=_PAGE_PARSE_TIMEOUT_S)
+                except FuturesTimeoutError:
+                    _logger.warning(
+                        f"Page {page_idx + 1} timed out during marker scan "
+                        f"({_PAGE_PARSE_TIMEOUT_S}s) — skipping."
+                    )
+                    _ex.shutdown(wait=False)
+                    continue
+                except Exception as exc:
+                    _logger.warning(
+                        f"Page {page_idx + 1} failed during marker scan: {exc} — skipping."
+                    )
+                    continue
+                finally:
+                    _ex.shutdown(wait=False)
+
+                for line_idx, (y_top, y_bottom, line_text, x_min) in enumerate(lines):
+                    # ── STAAR path: number leads the line ("1. Which...") ─────
                     match = QUESTION_LINE_PATTERN.match(line_text)
                     if match:
                         markers.append(_QuestionMarker(
@@ -475,6 +656,39 @@ class BlockDetector:
                             page_number=page_idx,
                             y_top=y_top,
                             text_preview=line_text[:60],
+                        ))
+                        continue
+
+                    # ── NY path: standalone number below the stem line ────────
+                    # The number appears on its own line (e.g., just "5") with
+                    # the question stem on the line immediately above within
+                    # NY_NUMBER_STEM_LOOKAHEAD_PTS vertical distance.
+                    ny_match = NY_SIDEBAR_NUMBER_PATTERN.match(line_text)
+                    if ny_match:
+                        # Reject numbers that appear in mid-page content (fractions,
+                        # inline answers).  Real NY sidebar question numbers sit at
+                        # the left margin (x0 ≤ NY_SIDEBAR_MAX_X_PTS).
+                        if x_min > NY_SIDEBAR_MAX_X_PTS:
+                            continue
+                        q_num = int(ny_match.group(1))
+                        # Walk back to find the stem line immediately above.
+                        # Only look at the single preceding line; if it is within
+                        # the lookahead window, use its y_top as the block start.
+                        stem_y = y_top
+                        stem_preview = line_text[:60]
+                        if line_idx > 0:
+                            prev_y_top, _prev_y_bot, prev_text, _prev_x = lines[line_idx - 1]
+                            gap = y_top - prev_y_top
+                            if 0 < gap <= NY_NUMBER_STEM_LOOKAHEAD_PTS:
+                                # Found the stem — anchor the block at the stem,
+                                # not at the number line.
+                                stem_y = prev_y_top
+                                stem_preview = prev_text[:60]
+                        markers.append(_QuestionMarker(
+                            question_number=q_num,
+                            page_number=page_idx,
+                            y_top=stem_y,
+                            text_preview=stem_preview,
                         ))
 
         markers.sort(key=lambda m: (m.page_number, m.y_top))
@@ -497,7 +711,28 @@ class BlockDetector:
 
         with pdfplumber.open(pdf_path) as pdf:
             for page_idx, page in enumerate(pdf.pages):
-                for y_top, y_bottom, line_text in _extract_lines_with_coords(page):
+                # Use a per-page thread so a hung pdfminer parse can be abandoned
+                # without blocking every subsequent page.
+                _ex = ThreadPoolExecutor(max_workers=1)
+                try:
+                    lines = _ex.submit(
+                        _extract_lines_with_coords, page
+                    ).result(timeout=_PAGE_PARSE_TIMEOUT_S)
+                except FuturesTimeoutError:
+                    _logger.warning(
+                        f"Page {page_idx + 1} timed out during answer-choice scan "
+                        f"({_PAGE_PARSE_TIMEOUT_S}s) — skipping."
+                    )
+                    _ex.shutdown(wait=False)
+                    continue
+                except Exception as exc:
+                    _logger.warning(
+                        f"Page {page_idx + 1} failed during answer-choice scan: {exc} — skipping."
+                    )
+                    continue
+                finally:
+                    _ex.shutdown(wait=False)
+                for y_top, y_bottom, line_text, _x_min in lines:
                     if ANSWER_CHOICE_PATTERN.match(line_text):
                         choices.append(_AnswerChoiceLine(
                             page_number=page_idx,
@@ -537,8 +772,13 @@ class BlockDetector:
             # On the start page: choice must be at or below the question marker
             if choice.page_number == start_page and choice.y_top < start_y:
                 continue
-            # On the end page: choice must be above the next question marker
-            if choice.page_number == end_page and choice.y_top >= end_y:
+            # On the end page: choice must be strictly above the next question marker.
+            # Use strict > (not >=) so that choices whose y_top coincides exactly
+            # with the next marker's y_top are still attributed to the current block.
+            # In NY sidebar format the next question's number label and the current
+            # question's first answer choice share the same y-coordinate; the >=
+            # form incorrectly excluded those choices (BUG-XXX).
+            if choice.page_number == end_page and choice.y_top > end_y:
                 continue
             candidates.append(choice)
 
@@ -778,6 +1018,392 @@ class BlockDetector:
 
         return slices
 
+    # ── Mixed-format raster page detection ───────────────────────────────────
+
+    def _find_mixed_format_image_blocks(
+        self,
+        pdf_path: Path,
+        page_heights: list[float],
+        fence: int,
+    ) -> list[QuestionBlock]:
+        """
+        Find full-page raster pages in a text_rich document and return them as blocks.
+
+        Some NY released-test PDFs embed a handful of pages as scanned bitmaps
+        (0 extractable words, one full-page JPEG/FlateDecode image) while the rest
+        of the document has rich text.  These pages contain real questions that the
+        text-based marker scan cannot detect.
+
+        A page qualifies as a mixed-format image block when ALL of:
+          1. pdfplumber word count == 0 (no extractable text)
+          2. At least one embedded image exists whose bbox covers ≥
+             MIXED_FORMAT_IMAGE_MIN_COVERAGE (85%) of the page area
+          3. Page index is ≥ MIN_CONTENT_PAGE and < fence
+
+        Each qualifying page produces one QuestionBlock (full-page slice), using
+        the same y_bottom logic as _find_image_heavy_y_bottom.  The
+        question_number is set to 0 — upstream code sorts by page order so the
+        block lands in the right position; the label overlay is suppressed for
+        text_rich mode anyway.
+
+        Args:
+            pdf_path:     Source PDF path.
+            page_heights: Page heights in PDF points (from _get_page_geometry).
+            fence:        Answer key fence page index (exclusive upper bound).
+
+        Returns:
+            List of QuestionBlock (may be empty if no raster pages found).
+        """
+        blocks: list[QuestionBlock] = []
+        fitz_doc = fitz.open(str(pdf_path))
+        try:
+            with pdfplumber.open(str(pdf_path)) as pdf:
+                for page_idx in range(MIN_CONTENT_PAGE, min(fence, len(page_heights))):
+                    # Must have zero pdfplumber words
+                    plumber_words = pdf.pages[page_idx].extract_words()
+                    if plumber_words:
+                        continue
+
+
+                    # Must have at least one full-page-covering image
+                    fitz_page = fitz_doc[page_idx]
+                    page_w = fitz_page.rect.width
+                    page_h = fitz_page.rect.height
+                    page_area = page_w * page_h
+                    if page_area <= 0:
+                        continue
+
+                    has_full_page_image = False
+                    for info in fitz_page.get_image_info():
+                        bbox = info.get("bbox")
+                        if bbox is None:
+                            continue
+                        img_w = bbox[2] - bbox[0]
+                        img_h = bbox[3] - bbox[1]
+                        coverage = (img_w * img_h) / page_area
+                        if coverage >= MIXED_FORMAT_IMAGE_MIN_COVERAGE:
+                            has_full_page_image = True
+                            break
+
+                    if not has_full_page_image:
+                        continue
+
+                    # Reject colorful instruction/section-header pages that happen
+                    # to be raster.  Question pages are black-text on white — low
+                    # pixel std-dev.  Cover/session-header pages with background
+                    # fills have high std-dev (≥ 25).  We render a tiny 10%-scale
+                    # thumbnail of the center 80% of the page for speed.
+                    center_clip = fitz.Rect(
+                        fitz_page.rect.width * 0.1,
+                        fitz_page.rect.height * 0.1,
+                        fitz_page.rect.width * 0.9,
+                        fitz_page.rect.height * 0.9,
+                    )
+                    thumb = fitz_page.get_pixmap(
+                        matrix=fitz.Matrix(0.1, 0.1),
+                        clip=center_clip,
+                        colorspace=fitz.csGRAY,
+                    )
+                    if thumb.samples:
+                        vals = list(thumb.samples)
+                        mean_v = sum(vals) / len(vals)
+                        variance = sum((v - mean_v) ** 2 for v in vals) / len(vals)
+                        stddev = variance ** 0.5
+                        if stddev >= MIXED_FORMAT_IMAGE_MAX_PIXEL_STDDEV:
+                            # Likely a coloured heading / instruction page — skip
+                            continue
+                    y_bottom = self._find_image_heavy_y_bottom(
+                        fitz_page, page_heights[page_idx], plumber_words
+                    )
+                    blocks.append(QuestionBlock(
+                        question_number=0,
+                        slices=[PageSlice(
+                            page_number=page_idx,
+                            y_top=0.0,
+                            y_bottom=y_bottom,
+                        )],
+                        text_preview=f"(image page {page_idx + 1})",
+                    ))
+        finally:
+            fitz_doc.close()
+
+        return blocks
+
+    # ── Vector-choice expansion ───────────────────────────────────────────────
+
+    def _expand_blocks_for_vector_choices(
+        self,
+        pdf_path: Path,
+        blocks: list[QuestionBlock],
+        page_heights: list[float],
+    ) -> list[QuestionBlock]:
+        """
+        Extend each block's y_bottom to cover vector-drawn answer choice diagrams.
+
+        Some exam formats (e.g. NY released tests) use geometric or pictorial
+        answer choices rendered as PDF vector drawings rather than text.  In
+        these blocks the text anchor for pdfplumber is only the letter labels
+        (A, B, C, D) — the actual shapes extend significantly below.
+
+        Strategy:
+          For each block, query PyMuPDF drawing bboxes on the last slice's
+          page.  A drawing qualifies for expansion if:
+            (a) its bottom (y1) extends past the current text-based y_bottom,
+            (b) it is within the content zone (above the footer zone),
+            (c) it is not a white-filled layout container (all fill channels >= 0.95).
+          The maximum qualifying y1 + BLOCK_BOTTOM_PADDING becomes the new
+          y_bottom, capped at the footer zone top and the next block's y_top
+          on the same page.  If the net gain is < VECTOR_EXPANSION_MIN_GAP_PTS
+          the block is not expanded (avoids spurious expansions from thin rules).
+
+        This is a no-op for purely text-choice exams (STAAR) where drawings
+        are decorative and the text y_bottom is already correct.
+
+        Args:
+            pdf_path:     Source PDF path.
+            blocks:       Current list of QuestionBlock from _build_blocks.
+            page_heights: Page heights in PDF points.
+
+        Returns:
+            New list of QuestionBlock with expanded y_bottom where applicable.
+        """
+        if not blocks:
+            return blocks
+
+        # Build a page → [block_idx, ...] index for next-block lookup
+        page_to_blocks: dict[int, list[int]] = {}
+        for idx, block in enumerate(blocks):
+            last_page = block.slices[-1].page_number
+            page_to_blocks.setdefault(last_page, []).append(idx)
+
+        fitz_doc = fitz.open(str(pdf_path))
+        try:
+            for block_idx, block in enumerate(blocks):
+                last_slice = block.slices[-1]
+                page_idx = last_slice.page_number
+                page_height = page_heights[page_idx]
+                current_y_bottom = last_slice.y_bottom
+
+                # Footer zone: do not extend into it
+                footer_zone_top = page_height * (1.0 - IMAGE_HEAVY_FOOTER_ZONE_FRACTION)
+
+                if current_y_bottom >= footer_zone_top:
+                    # Already reaches the footer zone — nothing to expand
+                    continue
+
+                # Find the next block that starts on the same page (upper bound
+                # for expansion so we never overlap the next question).
+                next_block_y_top_same_page: float = footer_zone_top
+                for other_idx in page_to_blocks.get(page_idx, []):
+                    if other_idx <= block_idx:
+                        continue
+                    other_first_slice = blocks[other_idx].slices[0]
+                    if other_first_slice.page_number == page_idx:
+                        next_block_y_top_same_page = min(
+                            next_block_y_top_same_page,
+                            other_first_slice.y_top,
+                        )
+
+                # Query PyMuPDF drawings on this page
+                fitz_page = fitz_doc[page_idx]
+                max_drawing_y: float = current_y_bottom
+                for drawing in fitz_page.get_drawings():
+                    rect = drawing.get("rect")
+                    if rect is None:
+                        continue
+
+                    # Skip white-filled rectangles — these are layout containers
+                    # (answer-box backgrounds, section dividers) rather than
+                    # content shapes.  White fill: all channels >= 0.95.
+                    fill = drawing.get("fill")
+                    if fill is not None and all(ch >= 0.95 for ch in fill[:3]):
+                        continue
+
+                    draw_y1 = rect.y1
+
+                    # Include drawings whose bottom extends past the current
+                    # crop boundary AND lies within the allowed expansion zone.
+                    # Using rect.y1 > current_y_bottom (not rect.y0) captures
+                    # shapes that START before the text label (as is typical for
+                    # side-by-side image choices) but END below the text y_bottom.
+                    if (rect.y1 > current_y_bottom
+                            and draw_y1 <= footer_zone_top
+                            and draw_y1 <= next_block_y_top_same_page):
+                        max_drawing_y = max(max_drawing_y, draw_y1)
+
+                gap = max_drawing_y - current_y_bottom
+                if gap < VECTOR_EXPANSION_MIN_GAP_PTS:
+                    # Drawings only marginally extend beyond text bottom
+                    # (e.g., decorative underlines) — do not expand
+                    continue
+
+                # Expand the last slice's y_bottom
+                new_y_bottom = min(
+                    max_drawing_y + BLOCK_BOTTOM_PADDING,
+                    footer_zone_top,
+                    next_block_y_top_same_page,
+                )
+                expanded_slice = PageSlice(
+                    page_number=last_slice.page_number,
+                    y_top=last_slice.y_top,
+                    y_bottom=new_y_bottom,
+                )
+                blocks[block_idx] = QuestionBlock(
+                    question_number=block.question_number,
+                    slices=block.slices[:-1] + [expanded_slice],
+                    text_preview=block.text_preview,
+                )
+        finally:
+            fitz_doc.close()
+
+        return blocks
+
+    # ── Constructed-Response Trimming ─────────────────────────────────────────
+
+    def _trim_constructed_response_blocks(
+        self,
+        pdf_path: Path,
+        blocks: list[QuestionBlock],
+    ) -> list[QuestionBlock]:
+        """
+        Shorten constructed-response blocks by trimming blank work-area space.
+
+        Strategy — two-pass:
+          Pass 1 (CR detection): confirm the block is a constructed-response
+            block by checking whether any line within the slice starts with a
+            CR_TRIM_MARKERS string.
+          Pass 2 (crop point): scan consecutive-line gaps > CR_BLANK_GAP_THRESHOLD
+            (default 100 pts).  For each candidate gap, verify via PyMuPDF that
+            no drawings exist in the interval — diagram regions between text lines
+            must not be mistaken for student-work blanks.  Crop at the first
+            *empty* gap: y_bottom = last_content_line_y + CR_BLANK_LINES_KEEP *
+            CR_LINE_HEIGHT_PTS.
+
+          Fallback: if no empty large gap is found but a trim marker was
+            detected, crop at trim_marker_y + padding.
+        """
+        if not blocks:
+            return blocks
+
+        trimmed: list[QuestionBlock] = []
+        fitz_doc = fitz.open(str(pdf_path))
+        try:
+            with pdfplumber.open(str(pdf_path)) as pdf:
+                for block in blocks:
+                    last_slice = block.slices[-1]
+                    page_idx = last_slice.page_number
+
+                    if page_idx >= len(pdf.pages):
+                        trimmed.append(block)
+                        continue
+
+                    plumber_page = pdf.pages[page_idx]
+                    words = plumber_page.extract_words(
+                        x_tolerance=3,
+                        y_tolerance=3,
+                        keep_blank_chars=False,
+                    )
+
+                    # Build sorted line list within the slice's vertical span
+                    lines: list[tuple[float, str]] = []
+                    current_line_y: float = -999.0
+                    current_words: list[str] = []
+                    for word in sorted(words, key=lambda w: (w["top"], w["x0"])):
+                        if abs(word["top"] - current_line_y) > LINE_Y_TOLERANCE:
+                            if current_words:
+                                lines.append((current_line_y, " ".join(current_words)))
+                            current_line_y = word["top"]
+                            current_words = [word["text"]]
+                        else:
+                            current_words.append(word["text"])
+                    if current_words:
+                        lines.append((current_line_y, " ".join(current_words)))
+
+                    slice_lines = [
+                        (y, txt) for y, txt in lines
+                        if last_slice.y_top <= y <= last_slice.y_bottom
+                    ]
+
+                    # ── Pass 1: confirm CR block ───────────────────────────
+                    is_cr = False
+                    first_trim_y: Optional[float] = None
+                    for line_y, line_text in slice_lines:
+                        lowered = line_text.strip().lower()
+                        for marker in CR_TRIM_MARKERS:
+                            if lowered.startswith(marker):
+                                is_cr = True
+                                if first_trim_y is None:
+                                    first_trim_y = line_y
+                                break
+
+                    if not is_cr:
+                        trimmed.append(block)
+                        continue
+
+                    # ── Pass 2: find first empty large gap ─────────────────
+                    # Collect drawing y-extents to distinguish content-filled
+                    # gaps (diagrams) from truly blank student-work areas.
+                    fitz_page = fitz_doc[page_idx]
+                    drawing_intervals: list[tuple[float, float]] = []
+                    for drawing in fitz_page.get_drawings():
+                        rect = drawing.get("rect")
+                        if rect is None:
+                            continue
+                        fill = drawing.get("fill")
+                        if fill is not None and all(ch >= 0.95 for ch in fill[:3]):
+                            continue  # skip white-fill layout containers
+                        drawing_intervals.append((rect.y0, rect.y1))
+
+                    def gap_has_drawing(y_start: float, y_end: float) -> bool:
+                        # A drawing counts as gap content only if it overlaps
+                        # the gap by a meaningful amount (≥ 5 pts).  This
+                        # prevents the question-number label box (which sits
+                        # just above the gap start and overlaps by ~2 pts) from
+                        # being mistaken for diagram content inside the blank.
+                        MIN_OVERLAP = 5.0
+                        for dy0, dy1 in drawing_intervals:
+                            overlap = min(dy1, y_end) - max(dy0, y_start)
+                            if overlap >= MIN_OVERLAP:
+                                return True
+                        return False
+
+                    crop_y: Optional[float] = None
+                    for i in range(len(slice_lines) - 1):
+                        y_curr, _ = slice_lines[i]
+                        y_next, _ = slice_lines[i + 1]
+                        if y_next - y_curr > CR_BLANK_GAP_THRESHOLD:
+                            if not gap_has_drawing(y_curr, y_next):
+                                crop_y = y_curr
+                                break
+                            # Gap contains drawings — skip, keep scanning
+
+                    if crop_y is not None:
+                        new_y_bottom = crop_y + CR_BLANK_LINES_KEEP * CR_LINE_HEIGHT_PTS
+                    elif first_trim_y is not None:
+                        new_y_bottom = first_trim_y + CR_BLANK_LINES_KEEP * CR_LINE_HEIGHT_PTS
+                    else:
+                        trimmed.append(block)
+                        continue
+
+                    # Safety clamps
+                    new_y_bottom = min(new_y_bottom, last_slice.y_bottom)
+                    new_y_bottom = max(new_y_bottom, last_slice.y_top + CR_LINE_HEIGHT_PTS)
+
+                    trimmed_slice = PageSlice(
+                        page_number=last_slice.page_number,
+                        y_top=last_slice.y_top,
+                        y_bottom=new_y_bottom,
+                    )
+                    trimmed.append(QuestionBlock(
+                        question_number=block.question_number,
+                        slices=block.slices[:-1] + [trimmed_slice],
+                        text_preview=block.text_preview,
+                    ))
+        finally:
+            fitz_doc.close()
+
+        return trimmed
+
     # ── Vision Fallback ───────────────────────────────────────────────────────
 
     def _find_first_marker_by_vision(
@@ -839,22 +1465,25 @@ class BlockDetector:
 # ─── Line Extraction Helper ────────────────────────────────────────────────────
 
 
-def _extract_lines_with_coords(page) -> list[tuple[float, float, str]]:
+def _extract_lines_with_coords(page) -> list[tuple[float, float, str, float]]:
     """
     Group pdfplumber words into text lines by y-coordinate proximity.
 
     Words within LINE_Y_TOLERANCE pts of each other are treated as the
-    same line. Returns list of (y_top, y_bottom, line_text) sorted top to bottom.
+    same line. Returns list of (y_top, y_bottom, line_text, x_min) sorted
+    top to bottom.
 
     y_top is the minimum word 'top' value in the line cluster.
     y_bottom is the maximum word 'bottom' value in the line cluster — used
     to compute tight crop boundaries below the last answer choice.
+    x_min is the minimum word 'x0' value in the line cluster — used to
+    distinguish left-margin sidebar numbers from mid-page embedded numbers.
 
     Args:
         page: A pdfplumber Page object.
 
     Returns:
-        List of (y_top, y_bottom, line_text) tuples sorted top to bottom.
+        List of (y_top, y_bottom, line_text, x_min) tuples sorted top to bottom.
     """
     words = page.extract_words() or []
     if not words:
@@ -875,12 +1504,13 @@ def _extract_lines_with_coords(page) -> list[tuple[float, float, str]]:
             groups[assigned_y].append(word)
 
     # Sort each line's words left to right, then build text and compute bounds
-    lines: list[tuple[float, float, str]] = []
+    lines: list[tuple[float, float, str, float]] = []
     for y, group_words in sorted(groups.items()):
         sorted_words = sorted(group_words, key=lambda w: float(w["x0"]))
         line_text = " ".join(w["text"] for w in sorted_words)
         y_bottom = max(float(w["bottom"]) for w in group_words)
-        lines.append((y, y_bottom, line_text))
+        x_min = min(float(w["x0"]) for w in group_words)
+        lines.append((y, y_bottom, line_text, x_min))
 
     return lines
 

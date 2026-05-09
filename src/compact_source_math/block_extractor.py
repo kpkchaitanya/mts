@@ -19,7 +19,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
-from src.compact_source.block_detector import QuestionBlock, PageSlice
+from src.compact_source_math.block_detector import QuestionBlock, PageSlice
 from src.config import PDF_RENDER_DPI
 from src.utils.image_utils import count_bottom_blank_rows_from_pixmap
 
@@ -142,8 +142,18 @@ class BlockExtractor:
         if blank_rows <= 0:
             return pm
 
+        # Subtract 1 safety row before converting to PDF points.
+        # blank_rows * 72 / DPI is non-integer; the resulting float clip
+        # boundary can round down to h - blank_rows - 1 pixels when fitz
+        # re-renders, slicing the last content row off the block (BUG-XXX).
+        # Keeping one extra row ensures the last content row is always
+        # fully included after rounding.
+        safe_blank_rows = max(0, blank_rows - 1)
+        if safe_blank_rows <= 0:
+            return pm
+
         # Compute trimmed height in PDF points and clamp
-        trim_pts = (blank_rows * 72.0) / self._dpi
+        trim_pts = (safe_blank_rows * 72.0) / self._dpi
         new_y_bottom = max(page_slice.y_top, page_slice.y_bottom - trim_pts)
         if new_y_bottom >= page_slice.y_bottom:
             return pm

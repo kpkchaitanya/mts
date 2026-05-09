@@ -32,6 +32,11 @@ Add new items at the **top** of the Open Items table (newest first).
 
 | ID | Date | Type | Priority | Feature | Summary | Status |
 |----|------|------|----------|---------|---------|--------|
+| IMP-023 | 2026-05-08 | enhancement | P1 — must have | global | Single run folder + consolidated log — one invocation of compact_runner with multiple inputs produces one shared run folder containing all output PDFs; one `run.log` per run consolidating compaction report, pack layouts, telemetry, and source bound map | done |
+| IMP-022 | 2026-05-08 | dx | P1 — must have | global | Functional QA scenarios — define explicit QA checklist per pipeline: what to check, how to check it, what pass looks like; run after every code change before closing a bug or feature | done |
+| IMP-021 | 2026-05-08 | dx | P2 — should have | global | Single run file — eliminate bin/ folder for PYTHONPYCACHEPREFIX; use `PYTHONDONTWRITEBYTECODE=1` in .env instead; remove bin/ from repo and .gitignore | open |
+| IMP-020 | 2026-05-08 | dx | P1 — must have | global | POC-first workflow — before touching spec/design/code on any bug or feature, run a minimal proof-of-concept script that reproduces the issue or validates the fix; only proceed to full implementation once POC confirms the approach | open |
+| IMP-019 | 2026-05-08 | dx | P1 — must have | global | Fix classification — before fixing any bug, classify it as Simple (isolated, 1–3 lines, no logic change) or Deep (logic, architecture, data flow); Simple fixes proceed immediately; Deep fixes require: understand → strategize → POC → implement → verify; never jump to code on a Deep fix | done |
 | IMP-018 | 2026-04-27 | feature | P2 — should have | compact_source | Question number overlay — for image_heavy PDFs (EOG) the question number is embedded in the footer ("N of 40") and is lost when the footer is cropped; packer must overlay sequential number labels ("1.", "2.", …) as white-backed text in the top-left of each block in the output PDF; `--question-start N` allows user to shift the sequence; `--no-question-numbers` suppresses; auto-enabled for `is_image_heavy=True`, suppressed for text_rich | done |
 | IMP-017 | 2026-04-27 | eval | P1 | compact_source | Block height efficiency checker — post-run check measures `extracted block height / page height` per block; flags any block ≥ 95% (`IMAGE_HEAVY_HEIGHT_WARN_FRACTION`) in compaction report; image_heavy format only; auto-heal deferred to IMP-018 | done |
 | IMP-016 | 2026-04-26 | dx | P2 | global | CONTRIBUTING.md and dev setup guide | open |
@@ -175,6 +180,174 @@ When logging an improvement, add a row to the Open Items table AND create a deta
 ---
 
 ## Improvement Detail Records
+
+---
+
+### IMP-023
+
+**Date:** 2026-05-08
+**Type:** enhancement
+**Priority:** P1 — must have
+**Feature:** global
+**Status:** open
+
+#### Description
+
+When `compact_runner.py` is given multiple `--inputs`, it spawns a separate orchestrator subprocess per file. Each subprocess creates its own timestamped run folder (`20260508_131850`, `20260508_131913`, `20260508_131933`, …). The result is a cluttered artifacts directory — one folder per grade, each with its own `run.log`, `run-telemetry.json`, and report files.
+
+Two changes needed:
+
+1. **Single run folder** — one invocation of `compact_runner` with N inputs produces one shared run folder (named from the batch start time). All output PDFs land in that folder, named by source file stem + col count.
+2. **Consolidated log** — one `run.log` per run that merges the content of all per-file artifacts into a single readable document: compaction report (`compaction_report.md`), pack layouts (`*_pack_layouts.csv`), run telemetry (`run-telemetry.json`), and source bound map (`*_source_bound_map.md`). Each file's section is clearly headed with the source filename. No separate artifact files per input.
+
+#### Success Criteria
+
+1. `python scripts/compact_runner.py --inputs g3.pdf g4.pdf g5.pdf --columns 2` produces exactly one run folder, e.g. `.agent/evals/runs/math_worksheet_generation_from_source/20260508_134500/`.
+2. That folder contains: `g3_Compacted_2col.pdf`, `g4_Compacted_2col.pdf`, `g5_Compacted_2col.pdf`, and one `run.log`.
+3. `run.log` has a clearly headed section per input file and consolidates: compaction report, pack layouts, telemetry, and source bound map for that file.
+4. Single-input invocations are unaffected — behavior identical to today.
+
+#### Motivation
+
+Today's session ran grades 3, 4, 5 as three separate commands and produced 3 separate folders. Reviewing outputs required navigating 3 folders. A teacher or operator reviewing a batch run should find all outputs in one place.
+
+#### Authority Layer to Update
+
+- `scripts/compact_runner.py` — batch run ID, shared output path passed to each subprocess
+- `src/orchestrator.py` — accept `--run-id` and `--output-dir` overrides so the runner can inject a shared folder
+- `src/utils/artifact_writer.py` — support append mode for shared `run.log`
+
+---
+
+### IMP-022
+
+**Date:** 2026-05-08
+**Type:** dx
+**Priority:** P1 — must have
+**Feature:** global
+**Status:** open
+
+#### Description
+
+There is no written QA checklist for the compact_source pipeline. After code changes, verification is ad-hoc — we run the pipeline and look at the output. This causes regressions to go unnoticed and makes it unclear what "done" means for a bug fix.
+
+Define a formal set of functional QA scenarios: one per pipeline stage, plus end-to-end. Each scenario states what to check, how to check it (command or code snippet), and what a PASS result looks like.
+
+#### Success Criteria
+
+1. A `qa-scenarios.md` document exists in `.agent/specs/compact_source/` covering all 4 pipeline stages: detection, extraction, packing, reporting.
+2. Each scenario has: input, command/check, expected output, pass/fail criterion.
+3. QA scenarios are run and recorded after every bug fix or feature implementation before closing the item.
+4. At minimum these scenarios are covered:
+   - Detection: correct block count for Grade 3/4/5 EOG PDFs
+   - Extraction: image dimensions match expected DPI (e.g. 1700px wide at 200 DPI on letter page)
+   - Packing 1-col: page count reasonable (≤ ~1 page per block)
+   - Packing 2-col: page count roughly half of 1-col
+   - No infinite loop: any single PDF completes in under 60s
+   - Image sharpness: embedded PNG width ≥ 1200px at 200 DPI settings
+   - Output file size: > 100 KB (not blank)
+
+#### Authority Layer to Update
+
+- new file: `.agent/specs/compact_source/qa-scenarios.md`
+- governance: reference from `compact_source-spec.md`
+
+---
+
+### IMP-021
+
+**Date:** 2026-05-08
+**Type:** dx
+**Priority:** P2 — should have
+**Feature:** global
+**Status:** open
+
+#### Description
+
+`PYTHONPYCACHEPREFIX=./bin` in `.env` redirects all `__pycache__` folders into `bin/`. This creates a `bin/Users/neeli/...` deeply nested mirror of the source tree inside the repo — noise in the workspace tree with no benefit that outweighs the cost.
+
+Replace with `PYTHONDONTWRITEBYTECODE=1` to suppress `.pyc` generation entirely. Remove `bin/` from the repo and from `.gitignore`.
+
+#### Success Criteria
+
+1. `.env` sets `PYTHONDONTWRITEBYTECODE=1`; `PYTHONPYCACHEPREFIX` removed.
+2. `bin/` folder deleted from repo.
+3. `.gitignore` updated accordingly.
+4. Pipeline runs cleanly with no `.pyc` files generated anywhere.
+
+#### Motivation
+
+Reported during today's debug session: the `bin/` tree caused confusion when checking workspace structure; it also means stale `.pyc` files can silently override source changes (as observed with the DPI config fix).
+
+#### Authority Layer to Update
+
+- `.env`
+- `.gitignore`
+
+---
+
+### IMP-020
+
+**Date:** 2026-05-08
+**Type:** dx
+**Priority:** P1 — must have
+**Feature:** global
+**Status:** open
+
+#### Description
+
+When a bug fix or feature is non-trivial, the current workflow jumps directly from identifying the issue to editing source files. This caused today's session to apply an inverted fix (changing `not col_blocks` instead of `col_blocks`), which was deployed, produced wrong output, and required a second correction cycle.
+
+Introduce a mandatory POC step: before any spec, design, or code change on a Deep fix, write a minimal self-contained script (e.g. `scripts/poc_<issue>.py`) that either reproduces the bug or validates the proposed fix against a real input. Only proceed to full implementation once the POC produces the expected result.
+
+#### Success Criteria
+
+1. For every Deep fix (see IMP-019), a POC script is created in `scripts/` before source is modified.
+2. POC script output is recorded in the bug detail block before the fix is applied.
+3. After the fix, the same POC script is re-run and its output confirms the fix.
+4. POC scripts are kept in `scripts/` and committed — they become regression tests.
+
+#### Authority Layer to Update
+
+- governance: add POC step to the bug-fix workflow in `.agent/governance/`
+- `bugs.md` entry template: add POC fields
+
+---
+
+### IMP-019
+
+**Date:** 2026-05-08
+**Type:** dx
+**Priority:** P1 — must have
+**Feature:** global
+**Status:** open
+
+#### Description
+
+All bug fixes are currently treated identically regardless of complexity. A 1-line typo fix and a layout-engine infinite loop get the same "read traceback → edit → rerun" process. This caused today's infinite-loop bug to take multiple attempts: the fix was applied without a strategy phase, the inverted logic was not caught before deployment, and a second fix was needed.
+
+Introduce a fix classification step at the start of every bug fix:
+
+- **Simple** — isolated change, 1–5 lines, no logic or data-flow change (e.g. wrong default value, off-by-one in a constant). Proceed directly to edit + verify.
+- **Deep** — involves logic, control flow, architecture, or multiple interacting components. Required workflow: **Understand → Strategize → POC → Implement → Verify**. Never skip to code.
+
+Classification must be stated explicitly before any edit is made. If uncertain, treat as Deep.
+
+#### Success Criteria
+
+1. Bug-fix checklist in `.agent/governance/` includes a classification step with Simple/Deep definitions.
+2. Agent always states classification and, for Deep fixes, states the strategy before touching any file.
+3. Deep fixes always include a POC step (see IMP-020).
+4. The inverted-fix class of error (applying the logical complement of the intended fix) is eliminated.
+
+#### Motivation
+
+Today's `_compute_layout` infinite-loop fix used `and not col_blocks` instead of `and col_blocks` — the exact opposite of the correct condition. This was a Deep fix applied without a strategy or POC phase. The error was only caught because the output was visually inspected.
+
+#### Authority Layer to Update
+
+- new/updated: `.agent/governance/bug-fix-workflow.md`
+- `bugs.md` entry template: add Classification field
 
 ---
 

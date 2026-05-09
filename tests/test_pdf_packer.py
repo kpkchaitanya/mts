@@ -20,8 +20,8 @@ from pathlib import Path
 import fitz  # PyMuPDF
 import pytest
 
-from src.compact_source.block_extractor import ExtractedBlock
-from src.compact_source.pdf_packer import PdfPacker
+from src.compact_source_math.block_extractor import ExtractedBlock
+from src.compact_source_math.pdf_packer import PdfPacker
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
