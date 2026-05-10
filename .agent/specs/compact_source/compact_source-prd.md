@@ -1,9 +1,9 @@
 # compact_source-prd.md — Product Requirements Document
 
 **Feature:** `compact_source`
-**Version:** v1
+**Version:** v2
 **Status:** Active
-**Date:** 2026-04-26
+**Date:** 2026-05-10
 
 ---
 
@@ -111,6 +111,47 @@ Teachers cannot reformat these PDFs manually: math symbols, graphs, geometric fi
 - Trimming is applied after `_expand_blocks_for_vector_choices` so vector-drawn diagrams are preserved
 - At least 1 blank line of whitespace is visible below the last content element in every trimmed block
 
+### US-09 — Human gate: operator confirms block count before extraction
+> As Ravi, when running the tool interactively, I want to see the detected block count and confirm before extraction begins, so I can catch detection errors before a useless output PDF is produced.
+
+**Background:** Block detection can mis-classify hybrid-format PDFs or fail on non-standard question numbering. Without a confirmation gate, a near-empty block set would silently produce a defective output that reaches teachers and students.
+
+**Acceptance Criteria:**
+- In interactive mode (`auto_confirm=False`, stdin is a TTY), the pipeline MUST pause after detection and display: detected block count, source page count, detected format, and a `WARNING: LOW COUNT` message if count < 3 or < 0.5 blocks/page
+- The operator is prompted `[Y/n]` to continue or abort
+- Responding `n` or `no` aborts the pipeline cleanly with exit code 0 and a clear message
+- The `WARNING: LOW COUNT` message MUST appear even when `auto_confirm=True` (batch mode) — it is a log signal, not just a prompt
+- Running with `--yes` / `-y` sets `auto_confirm=True` and skips the prompt (for scripted/batch runs)
+- Non-interactive stdin (piped input) skips the prompt silently
+
+### US-10 — Question number labels on image-heavy output
+> As Krishna, when I compact an EOG-style exam (where question numbers are embedded in the source footer that gets removed), I want each block in the output PDF to show its question number, so students can reference the original exam without confusion.
+
+**Background:** EOG and similar image-heavy PDFs embed the question number as a page footer (e.g., "5 of 40"). The compaction pipeline removes the footer to eliminate wasted whitespace (BUG-002). Without labels, the output PDF has no question numbers — a student-facing quality defect.
+
+**Acceptance Criteria:**
+- For `image_heavy` format outputs, each block image in the output PDF MUST have a text label (e.g., `"1."`) at the top-left corner
+- The label has a white-filled background rectangle so it is legible over any image content
+- Labels are numbered from `question_start` (default: 1); `--question-start N` sets the offset
+- `--no-question-numbers` suppresses all labels for cases where the teacher does not want them
+- Label text is written as PDF text (not as an image) — extractable by a PDF text reader
+- For `text_rich` format, labels are NOT added (question numbers are already embedded in the block images)
+- The orchestrator auto-enables labeling for `image_heavy` unless explicitly suppressed by the caller
+
+### US-11 — Visual comparison against a golden sample
+> As Neelima, I want to compare a compacted output PDF against a known-good reference (golden sample) page-by-page, so I can verify that a code change or configuration change has not degraded the visual quality of the output.
+
+**Background:** As the pipeline evolves, it is necessary to catch visual regressions — cases where output looks different from a previously approved reference. Manual visual inspection of every page is impractical at scale. An automated visual diff provides a fast, objective signal.
+
+**Acceptance Criteria:**
+- Running with `--compare --golden <path>` compares the output PDF against the golden PDF page by page
+- For each page pair, the comparator renders both at the same DPI and computes a pixel-level similarity score
+- Pages with similarity below a threshold are flagged in the terminal and in the compaction report
+- A summary line states: total pages compared, pages passed, pages flagged
+- If any page is flagged, the run result is `REVIEW` (not `FAIL` — the operator makes the final call)
+- The comparator does not modify the output PDF or the golden PDF
+- If page counts differ between output and golden, all extra pages are flagged automatically
+
 ---
 
 ## 4. Non-Goals
@@ -157,3 +198,14 @@ Teachers cannot reformat these PDFs manually: math symbols, graphs, geometric fi
 | Q1 | Should `question_list` filtering (e.g., `--questions 1-10`) be exposed in the CLI or remain internal? | Krishna | Open |
 | Q2 | Should the tool support multi-level subfolders when `--pdf` is a folder? | Ravi | Open |
 | Q3 | What is the right behavior when a PDF has 0 detectable blocks? Warn and skip, or exit non-zero? | Ravi | Open |
+| Q4 | Should the visual comparator (US-11) support a configurable similarity threshold? | Neelima | Open |
+| Q5 | Should `--question-start` (US-10) be auto-inferred from the question list, or always manual? | Krishna | Open |
+
+---
+
+## 8. Version History
+
+| Version | Date | Change |
+|---------|------|--------|
+| v1 | 2026-04-26 | Initial PRD — US-01 through US-08 |
+| v2 | 2026-05-10 | Added US-09 (human gate), US-10 (question number labels), US-11 (visual comparison). Removed visual comparison from Non-Goals. Added Q4, Q5. Traceability gap closure from compact_source-traceability.md audit. |

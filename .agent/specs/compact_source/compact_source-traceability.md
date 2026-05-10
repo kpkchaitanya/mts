@@ -41,18 +41,21 @@ A gap (`—`) in any column is an open risk. See Section 4 for the risk log.
 | US-07 | No silent failures — ValidationError before pipeline | design.md §1 (validate) | spec.md §10 (exception taxonomy), §11 (edge cases) | `orchestrator.py::run_compact_source()` | — | — | Functional Correctness | — | NOT STARTED |
 | US-08 | Constructed-response blank space trimmed | — | spec.md §5.5 (CR trimming) | `block_detector.py::_trim_constructed_response_blocks()` | — | — | Functional Correctness, Structural Quality | — | NOT STARTED |
 
+| US-09 | Human gate: operator confirms block count before extraction | design.md §1 (human gate subgraph) | spec.md §4.5 | `orchestrator.py` (human gate block) | — | — | Functional Correctness | — | NOT STARTED |
+| US-10 | Question number labels on image-heavy output | design.md §1 Stage 4 | spec.md §7.6 | `pdf_packer.py::PdfPacker._render()` | — | — | Functional Correctness, Structural Quality | — | NOT STARTED |
+| US-11 | Visual comparison against a golden sample | — | Not yet in spec.md ⚠️ | `comparator.py` | — | — | — | — | NOT STARTED |
+
 ---
 
-## 2. Implicit / Post-v1 Behaviors (Backward Traceability Check)
+## 2. Backward Traceability Check
 
-These behaviors exist in code but were **not in the original PRD**.
-Each must be either linked to a User Story (add a US row) or documented as a deliberate architectural decision.
+Previously unanchored behaviors — now resolved by PRD v2 (US-09, US-10, US-11).
 
-| Behavior | Code Location | Spec Coverage | User Story? | Risk |
-|---------|--------------|--------------|------------|------|
-| Human gate (block count confirmation) | `orchestrator.py` (human gate) | spec.md §4.5 | No US in PRD | **HIGH** — safety-critical behavior with no User Story. Add US-09. |
-| Question number overlay | `pdf_packer.py::_render()` | spec.md §7.6 | No US in PRD | **MEDIUM** — student-facing quality feature added post-v1. Add US-10. |
-| Visual comparison (`--compare`) | `comparator.py` | Not in spec.md | No US in PRD, not in spec | **HIGH** — entire module with no PRD, no spec clause, no QA scenario. |
+| Behavior | Code Location | Resolution |
+|---------|--------------|-----------|
+| Human gate (block count confirmation) | `orchestrator.py` | ✅ Anchored to US-09 (PRD v2) |
+| Question number overlay | `pdf_packer.py::_render()` | ✅ Anchored to US-10 (PRD v2) |
+| Visual comparison (`--compare`) | `comparator.py` | ✅ Anchored to US-11 (PRD v2) — spec clause still needed |
 
 ---
 
@@ -83,11 +86,12 @@ that actually triggers a ValidationError and confirms the correct error message 
 
 **Impact:** A regression in error handling would ship silently.
 
-### RISK-03 — comparator.py has no spec clause, no US, no QA scenario 🔴
-The entire visual comparison module is backward-traceable to nothing.
-It is exercised by the `--compare` flag but is not contractually defined anywhere.
+### RISK-03 — US-11 (visual comparison) has no spec clause ⚠️ *(Partially resolved)*
+`comparator.py` is now anchored to US-11 in PRD v2. However, there is still no spec
+clause governing its behavior, no QA scenario, and no eval dimension.
 
-**Impact:** The comparator can break silently. It can change behavior without violating any spec.
+**Remaining action:** Add §X to spec.md governing comparator behavior (similarity threshold,
+output format, REVIEW vs FAIL verdict). Then add QA scenarios.
 
 ### RISK-04 — Unit test coverage is critically thin 🔴
 Only 5 unit tests exist, all in `test_block_detector.py`, all about `y_bottom` boundary math.
@@ -97,18 +101,16 @@ reporter output, validation, batch orchestration, CR trimming, question number o
 **Impact:** All functional correctness is carried entirely by manual QA scenarios.
 A code change that breaks packing or reporting has no automated safety net.
 
-### RISK-05 — No unit tests for US-01, US-02, US-03, US-06, US-07, US-08 🔴
-Unit Test column is empty for 6 of 8 User Stories.
+### RISK-05 — No unit tests for US-01, US-02, US-03, US-06, US-07, US-08, US-09, US-10, US-11 🔴
+Unit Test column is empty for 9 of 11 User Stories.
 
 ### RISK-06 — Spec version history missing ⚠️
 Question number overlay (§7.6), CR trimming (§5.5), and fraction-based format detection (§4.2)
 were clearly added after v1 but there is no version history in the spec.
 Impossible to know what the spec looked like at any prior point.
 
-### RISK-07 — Human gate and question number overlay have no User Stories ⚠️
-Safety-critical behavior (human gate) and student-facing behavior (question labels)
-exist in code and spec but are not anchored to User Stories in the PRD.
-They cannot be deployment-verified against an intent.
+### RISK-07 — Human gate, question number overlay, and comparator had no User Stories ✅ *(Resolved)*
+All three are now anchored to US-09, US-10, US-11 in PRD v2 (2026-05-10).
 
 ---
 
@@ -116,15 +118,16 @@ They cannot be deployment-verified against an intent.
 
 | Priority | Action | Closes |
 |---------|--------|--------|
-| P1 | Add US-09 (human gate) and US-10 (question number overlay) to PRD | RISK-07 |
-| P1 | Add US-11 (visual comparison) or remove `comparator.py` from scope | RISK-03 |
+| ✅ Done | Added US-09 (human gate), US-10 (question labels), US-11 (comparator) to PRD v2 | RISK-07 |
+| P1 | Add spec clause for comparator (US-11) to spec.md | RISK-03 |
 | P1 | Write QA scenarios for US-05 (STAAR) and US-07 (error handling) | RISK-01, RISK-02 |
+| P1 | Write QA scenarios for US-09 (human gate) and US-11 (comparator) | RISK-03 |
 | P2 | Add unit tests for `_classify_format()` and answer key fence | RISK-04 |
 | P2 | Add unit tests for `PdfPacker.pack()` layout logic | RISK-04, RISK-05 |
 | P2 | Add unit tests for `Reporter.generate()` file size row | RISK-04, RISK-05 |
 | P2 | Add spec version history — backfill known additions | RISK-06 |
 | P3 | Run US-05 against STAAR PDFs and populate Deployment Verified | RISK-01 |
-| P3 | Run full QA sign-off for US-01, US-02, US-03, US-06, US-07 | All unverified rows |
+| P3 | Run full QA sign-off for US-01, US-02, US-03, US-06, US-07, US-09, US-10, US-11 | All unverified rows |
 
 ---
 
@@ -132,4 +135,5 @@ They cannot be deployment-verified against an intent.
 
 | Version | Date | Change |
 |---------|------|--------|
-| v1 | 2026-05-10 | Initial matrix created from spec, PRD, design docs, and test audit |
+| v1 | 2026-05-10 | Initial matrix — 8 User Stories mapped. 7 risks identified. |
+| v2 | 2026-05-10 | Added US-09, US-10, US-11 rows. RISK-07 resolved. RISK-03 downgraded to ⚠️ (PRD anchored; spec clause still needed). Updated recommended actions. |
