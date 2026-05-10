@@ -138,12 +138,47 @@ The teachers handle judgment, connection, and care.
 
 ## 9. Governing Documents
 
+**Governance Layer**
+
 | Document | Purpose |
 |----------|---------|
-| `soul.md` | The philosophy and values of MTS |
-| `constitution.md` | Governing principles for the AI system |
-| `agent.md` | Operating protocol for all agents — pipeline agents and coding agents |
-| `program.md` | Program structure, batches, and operational details |
-| `eval.md` | Project-level evaluation framework |
-| `.agent/bugs/bugs.md` | Active bug log — all known issues across features |
-| `.agent/improvements/backlog.md` | Feature improvement backlog — accepted improvements waiting for spec update |
+| `soul.md` | The philosophy and values of MTS — the why |
+| `constitution.md` | Governing principles for the AI system (this document) |
+| `agent.md` | Operating protocol for all agents |
+| `persona.md` | Agent behavioral expression and voice |
+| `role.md` | Agent functional responsibilities and authority chain |
+| `standards.md` | Engineering and content quality standards |
+| `safety.md` | Risk categories and policy boundaries |
+| `glossary.md` | Shared terminology — single source of truth for language |
+| `program.md` | MTS program structure and operational details |
+
+**Principles Layer**
+
+| Document | Purpose |
+|----------|---------|
+| `principles/engineering-principles.md` | Engineering decision principles |
+| `principles/prompting-principles.md` | Context and prompt construction principles |
+| `principles/agent-principles.md` | Agent design and operation principles |
+
+**Domain Intelligence**
+
+| Document | Purpose |
+|----------|---------|
+| `ontology/mts-ontology.md` | MTS domain concepts, relationships, and constraints |
+
+**Quality Infrastructure**
+
+| Document | Purpose |
+|----------|---------|
+| `evals/eval.md` | Project-level evaluation framework |
+| `harness/README.md` | Quality intelligence infrastructure (traces, regression, benchmarks) |
+| `observability/README.md` | Observability tracking strategy |
+
+**Operational Logs**
+
+| Document | Purpose |
+|----------|---------|
+| `memory/decisions.md` | Architecture and design decisions log |
+| `memory/learnings.md` | Accumulated system learnings |
+| `bugs/` | Active bug reports |
+| `improvements/` | Feature improvement backlog |

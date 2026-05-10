@@ -12,37 +12,112 @@
 ```
 mts/
 ├── README.md                          ← this file
-└── .agent/                            ← agent-agnostic agentic infrastructure
-    ├── governance/                    ← system-wide governing principles
-    │   ├── soul.md
-    │   ├── constitution.md
-    │   └── program.md
+├── src/                               ← production Python source code
+├── tests/                             ← unit and integration tests
+├── docs/                              ← source materials (exams, strategy)
+├── scripts/                           ← diagnostic and utility scripts
+├── config/                            ← configuration files
+└── .agent/                            ← AI-native cognitive infrastructure
+    │
+    ├── governance/                    ← system DNA: philosophy, principles, boundaries
+    │   ├── soul.md                    ← why MTS exists; core identity
+    │   ├── constitution.md            ← non-negotiable governing principles
+    │   ├── program.md                 ← MTS operational program knowledge
+    │   ├── agent.md                   ← agent operating protocol
+    │   ├── persona.md                 ← agent behavioral expression
+    │   ├── role.md                    ← agent functional responsibilities
+    │   ├── standards.md               ← engineering and content standards
+    │   ├── safety.md                  ← risk categories and policy boundaries
+    │   ├── glossary.md                ← shared terminology
+    │   ├── architecture/              ← strategic architecture documents
+    │   └── principles/                ← engineering, prompting, agent principles
+    │       ├── engineering-principles.md
+    │       ├── prompting-principles.md
+    │       └── agent-principles.md
+    │
+    ├── ontology/                      ← domain intelligence: what exists, what it means
+    │   └── mts-ontology.md            ← MTS domain concepts and relationships
+    │
+    ├── knowledge/                     ← LLM wiki: retrievable institutional knowledge
+    │   ├── README.md
+    │   ├── math-scope-and-sequence.md
+    │   ├── ela-scope-and-sequence.md
+    │   └── pedagogical-guidelines.md
+    │
+    ├── product/                       ← PRDs and user stories
+    │   ├── README.md
+    │   └── prd-compact-source.md
+    │
+    ├── specs/                         ← feature specifications (contracts of truth)
+    │   ├── compact_source/
+    │   ├── math_worksheet_generation_from_source/
+    │   └── platform/
+    │
+    ├── evals/                         ← evaluation frameworks
+    │   ├── eval.md                    ← PROJECT-LEVEL eval framework
+    │   └── math_worksheet_generation_from_source/
+    │
+    ├── harness/                       ← quality intelligence infrastructure
+    │   ├── README.md
+    │   ├── traces/                    ← execution traces for diagnosis
+    │   ├── regression/                ← regression test cases and results
+    │   └── benchmarks/                ← performance and quality benchmarks
+    │
+    ├── agents/                        ← agent definitions
+    │   └── math_worksheet_generation_from_source/
+    │
+    ├── workflows/                     ← workflow orchestration definitions
+    │   └── math_worksheet_generation_from_source/
+    │
+    ├── skills/                        ← reusable cognitive capability registry
+    │   └── README.md
+    │
+    ├── context/                       ← context engineering templates and strategy
+    │   └── README.md
+    │
+    ├── observability/                 ← observability tracking and instrumentation
+    │   └── README.md
+    │
     ├── memory/                        ← decisions and learnings log
     │   ├── decisions.md
     │   └── learnings.md
+    │
+    ├── bugs/                          ← bug reports (feed harness/failures)
+    ├── improvements/                  ← improvement proposals (feed harness/repair)
     ├── reference/                     ← reference documents
-    ├── specs/                         ← feature specifications (contracts of truth)
-    │   └── math_worksheet_generation_from_source/
-    ├── evals/                         ← evaluation frameworks + run artifacts
-    │   ├── eval.md                    ← PROJECT-LEVEL eval
-    │   ├── math_worksheet_generation_from_source/
-    │   └── runs/                      ← run artifacts and trace logs
-    │       └── math_worksheet_generation_from_source/
-    ├── agents/                        ← agent definitions
-    │   └── math_worksheet_generation_from_source/
-    ├── workflows/                     ← workflow definitions
-    │   └── math_worksheet_generation_from_source/
-    └── templates/                     ← reusable templates
-        └── math_worksheet_generation_from_source/
+    └── templates/                     ← reusable pipeline templates
 ```
+
+---
+
+## AI-Native Cognitive Architecture
+
+This repository is organized as an **AI-native cognitive system** — not just a codebase.
+
+The `.agent/` directory is the cognitive infrastructure: governance, ontology, knowledge,
+skills, context engineering, harness, and observability all work together to ensure
+that AI agents produce reliable, traceable, student-safe outputs.
+
+**Authority chain:**
+```
+soul.md → constitution.md → agent.md → role.md / persona.md → Spec → Workflow → Execution
+```
+
+**Quality chain:**
+```
+Evals → Harness → Traces → Regression → Benchmarks → Observability → Learning
+```
+
+Full architecture reference: `.agent/governance/architecture/holistic-ai-native-cognitive-architecture.md`
 
 ---
 
 ## Active Features
 
-| Feature | Status | Spec | Eval | Workflow |
-|---------|--------|------|------|----------|
-| math_worksheet_generation_from_source | In Design | ✅ v3 | Pending | Placeholder |
+| Feature | Status | PRD | Spec | Eval | Workflow |
+|---------|--------|-----|------|------|----------|
+| compact_source | ✅ Active | [PRD](.agent/product/prd-compact-source.md) | ✅ | Active | Active |
+| math_worksheet_generation_from_source | In Design | Planned | ✅ v3 | Pending | Placeholder |
 
 ---
 
