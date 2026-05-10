@@ -1,8 +1,8 @@
 # qa-scenarios.md — Functional QA Scenarios: compact_source_math
 
 **Feature:** `compact_source_math`  
-**Version:** v1  
-**Date:** 2026-05-08  
+**Version:** v2
+**Date:** 2026-05-10
 **Status:** Active  
 **Authority:** Enforced by IMP-022 and `agent.md` §8. **Must be run automatically after every generation run.** The agent must triage all failures by priority and iterate fixes until all P1 and P2 scenarios pass before reporting the run complete. See `agent.md` §8 for the full post-generation QA loop, priority assignment, and escalation rules.
 
@@ -441,7 +441,218 @@ python scripts/compact_runner.py `
 
 ---
 
-## QA Sign-Off Template
+## Stage 6 — Input Validation (US-07)
+
+### QA-VAL-01: Encrypted PDF raises ValidationError
+
+**Setup:** Create or obtain any password-protected PDF. Pass it as `--inputs`.
+
+**Command:**
+```powershell
+python scripts/compact_runner.py --inputs "path/to/encrypted.pdf" --grade 5 --subject Math
+```
+
+**Expected:**
+- Pipeline raises `ValidationError` (or prints an error line containing "encrypted" or "password").
+- Exit code is non-zero (1).
+- No output PDF is created.
+- No unhandled traceback shown to the operator.
+
+**Pass criterion:** All of the above are true.
+
+---
+
+### QA-VAL-02: Empty input folder raises ValidationError
+
+**Setup:** Point `--inputs` at a directory that exists but contains no PDF files.
+
+**Command:**
+```powershell
+python scripts/compact_runner.py --inputs "docs/strategy" --grade 5 --subject Math
+```
+
+**Expected:**
+- Pipeline raises `ValidationError` with a message containing "No PDF files found" (or equivalent).
+- Exit code is non-zero.
+- No output PDF is created.
+
+**Pass criterion:** All of the above are true.
+
+---
+
+### QA-VAL-03: scale_factor=0 raises ValidationError
+
+**Command:**
+```powershell
+python scripts/compact_runner.py `
+  --inputs "docs/exams/2026-EOGs/math/05_08_2026/NY_Math_Grade3_2023_Released_Test_Questions.pdf" `
+  --grade 3 --subject Math --scale-factor 0
+```
+
+**Expected:**
+- `ValidationError` raised before any PDF processing begins.
+- Message references scale_factor or DPI/resolution.
+- Exit code is non-zero.
+
+**Pass criterion:** All of the above are true.
+
+---
+
+### QA-VAL-04: columns=3 raises ValidationError
+
+**Command:**
+```powershell
+python scripts/compact_runner.py `
+  --inputs "docs/exams/2026-EOGs/math/05_08_2026/NY_Math_Grade3_2023_Released_Test_Questions.pdf" `
+  --grade 3 --subject Math --columns 3
+```
+
+**Expected:**
+- `ValidationError` raised before any PDF processing begins.
+- Message references columns or layout constraint.
+- Exit code is non-zero.
+
+**Pass criterion:** All of the above are true.
+
+---
+
+## Stage 7 — Human Gate (US-09)
+
+### QA-HG-01: Interactive mode shows block count and format before prompting
+
+**Command (no `--yes` flag):**
+```powershell
+python scripts/compact_runner.py `
+  --inputs "docs/exams/2026-EOGs/math/05_08_2026/NY_Math_Grade3_2023_Released_Test_Questions.pdf" `
+  --grade 3 --subject Math
+```
+*(Enter `y` when prompted.)*
+
+**Expected:**
+- Before the prompt appears, output contains detected block count (e.g., `Detected 22 blocks`) and format (e.g., `Format: image_heavy`).
+- Prompt text asks operator to confirm (e.g., `Proceed with extraction? [y/N]`).
+- After `y`: pipeline continues to completion normally.
+
+**Pass criterion:** All three lines appear in the expected order before operator input is requested.
+
+---
+
+### QA-HG-02: Low block count triggers WARNING even with auto_confirm enabled
+
+**Setup:** Configure `auto_confirm=True` in config or use the `--yes` flag, AND use a PDF that the pipeline detects fewer than the warning threshold blocks.
+
+**Expected:**
+- WARNING line printed (e.g., `WARNING: LOW COUNT — only N blocks detected`).
+- WARNING appears even though operator is not prompted (auto-confirm path).
+- Pipeline continues; operator can see the warning in the log.
+
+**Pass criterion:** WARNING line is present in run.log regardless of `--yes` flag.
+
+---
+
+### QA-HG-03: --yes flag skips interactive prompt; pipeline continues without operator input
+
+**Command:**
+```powershell
+python scripts/compact_runner.py `
+  --inputs "docs/exams/2026-EOGs/math/05_08_2026/NY_Math_Grade3_2023_Released_Test_Questions.pdf" `
+  --grade 3 --subject Math --yes
+```
+
+**Expected:**
+- No prompt appears (script completes without waiting for input).
+- Output PDF is generated normally.
+- run.log shows confirmation was auto-accepted.
+
+**Pass criterion:** Script completes non-interactively; output PDF exists.
+
+---
+
+### QA-HG-04: Responding `n` to the human gate aborts cleanly
+
+**Command (no `--yes`):**
+```powershell
+python scripts/compact_runner.py `
+  --inputs "docs/exams/2026-EOGs/math/05_08_2026/NY_Math_Grade3_2023_Released_Test_Questions.pdf" `
+  --grade 3 --subject Math
+```
+*(Enter `n` when prompted.)*
+
+**Expected:**
+- Pipeline aborts after `n`.
+- No output PDF created.
+- Exit code is non-zero OR pipeline prints `Aborted by operator` (clean exit, not a crash).
+- No unhandled exception or traceback.
+
+**Pass criterion:** All of the above are true.
+
+---
+
+## Stage 8 — Visual Comparison / Comparator (US-11)
+
+*Precondition: A golden PDF already exists at a known path. Use the last known-good output for NY Grade 3.*
+
+### QA-CMP-01: Identical PDFs — all pages PASS, no REVIEW trigger
+
+**Command:**
+```powershell
+python scripts/compact_runner.py `
+  --inputs "docs/exams/2026-EOGs/math/05_08_2026/NY_Math_Grade3_2023_Released_Test_Questions.pdf" `
+  --grade 3 --subject Math --compare --golden "<path/to/golden_grade3.pdf>"
+```
+
+**Expected:**
+- All pages report PASS in the visual comparison table.
+- No `VERDICT: REVIEW` block in the compaction report.
+- `Visual Comparison` section is omitted from the compaction report (clean run).
+- Pipeline exit code 0.
+
+**Pass criterion:** compaction report contains no `VERDICT: REVIEW` line.
+
+---
+
+### QA-CMP-02: Modified output page is flagged; result = REVIEW
+
+**Setup:** Produce an output PDF. Manually modify one page (or use a known-different PDF). Run the comparator against the original golden.
+
+**Expected:**
+- Flagged page appears in the visual comparison table with status `REVIEW`.
+- `VERDICT: REVIEW` block is present in the compaction report.
+- Comparison table shows SSIM < 0.97 for the flagged page.
+- Pipeline does **not** abort — it completes and the operator reads the verdict.
+
+**Pass criterion:** `VERDICT: REVIEW` present; pipeline exit code 0.
+
+---
+
+### QA-CMP-03: Page count mismatch — extra pages flagged
+
+**Setup:** Use a golden PDF with fewer pages than the current output (or vice versa).
+
+**Expected:**
+- Extra pages from the longer file are listed in the comparison table with status `REVIEW` (or `ABSENT`).
+- `VERDICT: REVIEW` is emitted.
+- No unhandled exception.
+
+**Pass criterion:** All extra/missing pages accounted for; VERDICT: REVIEW present.
+
+---
+
+### QA-CMP-04: --compare absent — comparator stage skipped entirely
+
+**Command (no --compare flag):**
+```powershell
+python scripts/compact_runner.py `
+  --inputs "docs/exams/2026-EOGs/math/05_08_2026/NY_Math_Grade3_2023_Released_Test_Questions.pdf" `
+  --grade 3 --subject Math
+```
+
+**Expected:**
+- No `Visual Comparison` section in the compaction report.
+- No VERDICT line in the report.
+- Pipeline completes normally.
+
+**Pass criterion:** compaction report contains no `Visual Comparison` heading.
 
 Copy this block into the bug or feature detail in `bugs.md` or `backlog.md` when closing an item:
 
@@ -469,4 +680,16 @@ Copy this block into the bug or feature detail in `bugs.md` or `backlog.md` when
 | QA-REP-02 (page reduction plausible) | PASS / FAIL |
 | QA-REP-03 (run.log complete) | PASS / FAIL |
 | QA-E2E-01 (full batch, 3 grades, 2-col) | PASS / FAIL |
+| QA-VAL-01 (encrypted PDF → ValidationError) | PASS / FAIL |
+| QA-VAL-02 (empty folder → ValidationError) | PASS / FAIL |
+| QA-VAL-03 (scale_factor=0 → ValidationError) | PASS / FAIL |
+| QA-VAL-04 (columns=3 → ValidationError) | PASS / FAIL |
+| QA-HG-01 (interactive: count + format shown) | PASS / FAIL |
+| QA-HG-02 (low count WARNING fires in auto mode) | PASS / FAIL |
+| QA-HG-03 (--yes skips prompt) | PASS / FAIL |
+| QA-HG-04 (n response aborts cleanly) | PASS / FAIL |
+| QA-CMP-01 (identical → no REVIEW) | PASS / FAIL |
+| QA-CMP-02 (modified page → REVIEW) | PASS / FAIL |
+| QA-CMP-03 (page count mismatch → REVIEW) | PASS / FAIL |
+| QA-CMP-04 (no --compare flag → stage skipped) | PASS / FAIL |
 ```

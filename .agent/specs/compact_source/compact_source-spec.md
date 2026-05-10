@@ -1,9 +1,9 @@
 # compact_source-spec.md
 
 **Feature:** `compact_source`
-**Version:** v1
+**Version:** v2
 **Status:** Active
-**Date:** 2026-04-26
+**Date:** 2026-05-10
 
 ---
 
@@ -485,6 +485,7 @@ All constants are defined in `src/config.py` and can be overridden via environme
 | `WHITESPACE_WARN_THRESHOLD` | 0.15 | `WHITESPACE_WARN_THRESHOLD` | Retained for image_utils pixel-level checks; no longer used by reporter |
 | `CR_BLANK_LINES_KEEP` | 2 | — | Number of blank line heights to preserve below the first constructed-response trim marker |
 | `CR_LINE_HEIGHT_PTS` | 12.0 | — | Assumed line height in points used for blank-line padding in constructed-response trimming |
+| `COMPARATOR_SIMILARITY_THRESHOLD` | 0.97 | — | Minimum page-level structural similarity score (SSIM) required for a page to be considered PASS |
 
 ---
 
@@ -528,3 +529,85 @@ Every clause in this spec that makes a claim about behavior MUST map to a test c
 | `new_y_bottom` never exceeds pre-trim `y_bottom` | TC-CR-03 |
 | `new_y_bottom` ≥ `trim_y + CR_LINE_HEIGHT_PTS` (minimum 1-line pad) | TC-CR-04 |
 | `image_heavy` blocks: `_trim_constructed_response_blocks()` changes no block boundary | TC-CR-05 |
+| `comparator.py` with identical PDFs → all pages PASS, no REVIEW trigger | TC-CMP-01 |
+| `comparator.py` with one modified page → page flagged, result = REVIEW | TC-CMP-02 |
+| `comparator.py` page count mismatch → extra pages flagged, result = REVIEW | TC-CMP-03 |
+| `comparator.py` with `--compare` absent → comparator stage skipped, no verdict emitted | TC-CMP-04 |
+| Comparator report section present in compaction report when `--compare` is used | TC-CMP-05 |
+
+---
+
+## 14. Visual Comparison (US-11)
+
+### 14.1 Purpose
+
+The comparator provides a structured signal for operators reviewing output quality against a known-good golden sample. It does **not** replace human judgment — the final call always belongs to the operator.
+
+### 14.2 Invocation
+
+Comparator runs **only** when `--compare --golden <path/to/golden.pdf>` is supplied. If omitted, the stage is fully skipped and no verdict appears in the report.
+
+```
+python scripts/compact_runner.py --inputs <input.pdf> --compare --golden <golden.pdf>
+```
+
+### 14.3 Algorithm
+
+1. Render every page of the output PDF at `COMPARATOR_RENDER_DPI` DPI.
+2. Render the corresponding page of the golden PDF at the same DPI.
+3. Compute SSIM (Structural Similarity Index) for each page pair.
+4. A page is **PASS** if SSIM ≥ `COMPARATOR_SIMILARITY_THRESHOLD` (default 0.97).
+5. A page is **REVIEW** if SSIM < `COMPARATOR_SIMILARITY_THRESHOLD`.
+
+### 14.4 Page Count Mismatch
+
+- If output has **more pages** than the golden: all extra output pages are flagged **REVIEW**.
+- If output has **fewer pages** than the golden: all missing golden pages are listed as **ABSENT**.
+- Overall verdict is **REVIEW** whenever any REVIEW or ABSENT page exists.
+
+### 14.5 Verdict Logic
+
+| Condition | Verdict |
+|-----------|--------|
+| All pages PASS, counts match | No verdict block in report (clean run) |
+| Any page REVIEW or ABSENT | `VERDICT: REVIEW` block added to compaction report |
+
+**REVIEW is never FAIL.** The pipeline does not abort on a REVIEW verdict. The operator reads the report and decides.
+
+### 14.6 Report Output
+
+When `--compare` is used the compaction report gains a **Visual Comparison** section:
+
+```
+## Visual Comparison
+Golden: <path>
+Pages compared: N
+
+| Page | SSIM | Status |
+|------|------|--------|
+| 1    | 0.99 | PASS   |
+| 3    | 0.82 | REVIEW |
+
+VERDICT: REVIEW
+Operator action required: inspect flagged pages before distributing.
+```
+
+If all pages pass the section is omitted from the report.
+
+### 14.7 Constants
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `COMPARATOR_SIMILARITY_THRESHOLD` | 0.97 | SSIM score below which a page is flagged REVIEW |
+| `COMPARATOR_RENDER_DPI` | follows `PDF_RENDER_DPI` | DPI for page renders during comparison |
+
+### 14.8 Version History
+
+| Version | Date | Change |
+|---------|------|--------|
+| v2 | 2026-05-10 | §14 added — anchors comparator.py to US-11; closes RISK-03 |
+| `comparator.py` with identical PDFs → all pages PASS, no REVIEW trigger | TC-CMP-01 |
+| `comparator.py` with one modified page → page flagged, result = REVIEW | TC-CMP-02 |
+| `comparator.py` page count mismatch → extra pages flagged, result = REVIEW | TC-CMP-03 |
+| `comparator.py` with `--compare` absent → comparator stage skipped, no verdict emitted | TC-CMP-04 |
+| Comparator report section present in compaction report when `--compare` is used | TC-CMP-05 |

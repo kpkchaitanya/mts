@@ -32,6 +32,7 @@ Add new items at the **top** of the Open Items table (newest first).
 
 | ID | Date | Type | Priority | Feature | Summary | Status |
 |----|------|------|----------|---------|---------|--------|
+| IMP-024 | 2026-05-10 | spec | P1 — must have | compact_source | QA scenarios for US-05 (STAAR text-rich) — need STAAR Grade 3/4/5 PDFs; add QA-STAAR-01 through QA-STAAR-04 covering format detection, block count, extraction quality, and 2-col pack for text-rich format; currently zero QA coverage for STAAR path (RISK-01) | open |
 | IMP-023 | 2026-05-08 | enhancement | P1 — must have | global | Single run folder + consolidated log — one invocation of compact_runner with multiple inputs produces one shared run folder containing all output PDFs; one `run.log` per run consolidating compaction report, pack layouts, telemetry, and source bound map | done |
 | IMP-022 | 2026-05-08 | dx | P1 — must have | global | Functional QA scenarios — define explicit QA checklist per pipeline: what to check, how to check it, what pass looks like; run after every code change before closing a bug or feature | done |
 | IMP-021 | 2026-05-08 | dx | P2 — should have | global | Single run file — eliminate bin/ folder for PYTHONPYCACHEPREFIX; use `PYTHONDONTWRITEBYTECODE=1` in .env instead; remove bin/ from repo and .gitignore | open |
