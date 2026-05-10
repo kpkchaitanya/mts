@@ -846,6 +846,7 @@ A "No" on any item is a signal to stop and repair the spec first.
 | 8 | Is there an eval hook — what dimension scores what? | Evals will measure the wrong thing |
 | 9 | Is a PoC required and has it been completed? | Approach may be a guess |
 | 10 | Has this spec been reviewed against the ontology? | Terminology may be inconsistent |
+| 11 | Does a traceability matrix exist with all columns populated? | No line of sight from User Story to verified deployment |
 
 ## Alignment Signal Protocol
 
@@ -880,6 +881,148 @@ The spec is not finished when it is written.
 It is finished when the feature it governs
 can be manually QA'd, regressed, and evaled
 without ambiguity.
+
+---
+
+# 8.5 Traceability Matrix as AI-Native Control Artifact
+
+The traceability matrix is the **connective tissue** of the spec-to-delivery chain.
+
+Without it, the artifacts of the system — PRDs, design docs, code, tests,
+evals — coexist without being formally linked.
+They can drift independently and silently.
+A bug fix changes code without updating the spec.
+A QA scenario validates something no one can trace to a User Story.
+A regression test protects behavior no requirement ever requested.
+
+The traceability matrix makes all of this visible and controlled.
+
+---
+
+## The Two Directions of Traceability
+
+```text
+Forward Traceability
+   User Story
+      → High-Level Design
+      → Low-Level Design
+      → Code (module / function)
+      → Unit Test
+      → Functional QA Scenario
+      → Eval Dimension
+      → Deployment Verified
+
+   Question: Did we build everything we intended?
+
+Backward Traceability
+   Deployment Verified
+      → Eval Dimension
+      → Functional QA Scenario
+      → Unit Test
+      → Code
+      → Low-Level Design
+      → High-Level Design
+      → User Story
+
+   Question: Is everything we built justified by an intent?
+```
+
+Both directions must hold.
+Forward gaps mean incomplete delivery.
+Backward gaps mean unauthorized behavior.
+
+---
+
+## Traceability Matrix Columns
+
+| Column | MTS Artifact | Location |
+|--------|-------------|----------|
+| US-ID | User Story ID | `product/prd-*.md` |
+| User Story Title | One-line summary | PRD §3 |
+| High-Level Design | Design doc reference | `specs/<feature>/*-design.md` |
+| Low-Level Design | System design reference | `specs/<feature>/*-system-design.md` |
+| Module / Function | Code location | `src/<module>/<file>.py` |
+| Unit Test ID | Test function name | `tests/test_*.py` |
+| QA Scenario ID | Scenario from qa-scenarios | `specs/<feature>/qa-scenarios.md` |
+| Eval Dimension | Dimension from eval framework | `evals/<feature>/eval.md` |
+| Deployment Verified | Date + PDF used in production | Run artifact or manual note |
+| Status | NOT STARTED / IN PROGRESS / VERIFIED | Per row |
+
+---
+
+## What Each Column Means
+
+**Deployment Verified** is the final column and the hardest to fake.
+It is populated only when the feature has been run against a real exam PDF
+in the actual production environment and produced correct output
+that was reviewed by a teacher or coordinator.
+
+It is a **living record** — not a one-time gate.
+Every time a new exam type is verified in production, a row is updated.
+A feature is not fully verified until every User Story has a deployment entry.
+
+---
+
+## What Breaks Without the Matrix
+
+| Symptom | Root Cause in Missing Traceability |
+|---------|------------------------------------|
+| Bug fix changes code but spec is not updated | No US→Code link to enforce spec update discipline |
+| QA scenario passes but wrong behavior ships | QA scenario not linked to a User Story; testing the wrong thing |
+| Regression appears after unrelated change | Code change had no traceability to what it was supposed to protect |
+| Can't tell if a User Story is complete | No row in the matrix connecting all artifacts to verified deployment |
+| New feature breaks old behavior | No backward traceability — new code not checked against existing US rows |
+
+---
+
+## Traceability Matrix Lifecycle
+
+```text
+Phase 1 — Understand + Design
+   → Populate: US-ID, Title, High-Level Design
+
+Phase 2 — Spec
+   → Populate: Low-Level Design, QA Scenario ID, Eval Dimension
+
+Phase 3 — Implement
+   → Populate: Module / Function, Unit Test ID
+
+Phase 4 — Eval + Regression
+   → Confirm: QA Scenario passes, Eval Dimension scored
+
+Phase 5 — Deployment Verified
+   → Populate: Date, production PDF used, reviewer
+   → Status → VERIFIED
+```
+
+A row is not VERIFIED until all columns are populated
+and Deployment Verified has a real entry.
+
+---
+
+## Matrix as Spec Health Signal
+
+The traceability matrix doubles as a real-time spec health dashboard.
+
+| Matrix State | Meaning |
+|-------------|----------|
+| Rows with empty Design columns | Spec written before design — high risk |
+| Rows with empty Unit Test columns | Code not covered — regression risk |
+| Rows with empty QA Scenario columns | No functional verification — delivery risk |
+| Rows with empty Deployment Verified | User Story never confirmed in production |
+| Backward gaps (code with no US row) | Unauthorized behavior in the codebase |
+
+---
+
+## Principle
+
+Every line of code should be traceable to a User Story.
+Every User Story should be traceable to verified production behavior.
+
+The matrix is not bureaucracy.
+It is the proof that the system does
+exactly what was intended —
+no more, no less.
 
 ---
 
