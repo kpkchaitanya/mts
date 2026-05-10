@@ -1,157 +1,150 @@
 ﻿# compact_source_command.md
 
-This document describes how to run the `compact_source` pipeline from the repository, how
-to perform visual comparisons against golden samples, how defects are logged, and an
-optional interactive runner that enables a human-in-the-loop incremental repair loop.
+How to run the `compact_source` pipeline, what the runner does, and how to
+interpret QA results.
 
-Purpose
+---
 
-- Run `compact_source` for one or more source PDFs.
-- Optionally compare outputs to golden PDFs and log defects for triage.
-- Provide a simple interactive loop to attempt conservative automated fixes (reduce
-  `--scale-factor`, retry) until the operator stops.
+## Overview
 
-Quick single-file command
+- Processes one or more source PDFs into compact worksheet PDFs.
+- By default produces **both 1-column and 2-column** layouts in a single run.
+- All outputs (PDFs + `run.log`) land in one shared run folder under
+  `.agent/evals/runs/math_worksheet_generation_from_source/<timestamp>/`.
+- After every batch the runner automatically executes the full QA suite and
+  prints a verdict table.
 
-Run from the project root:
+---
+
+## Standard command
+
+Run from the project root with the `.venv` activated:
 
 ```bash
-python -m src.orchestrator compact_source --pdf path/to/source.pdf --grade 8 --subject Math --compare --golden path/to/golden.pdf
+python scripts/compact_runner.py \
+  --inputs docs/exams/2026-EOGs/math/05_09_2026/NY_Math_Grade4_2023.pdf \
+           docs/exams/2026-EOGs/math/05_09_2026/NY_Math_Grade5_2023.pdf \
+  --grade 4 \
+  --subject Math
 ```
 
-Interactive runner (recommended)
+Multiple files (separate invocations per grade if needed):
 
-Save the helper runner as `scripts/compact_runner.py` and run it to process batches with
-optional golden mappings and an interactive retry loop. The runner:
+```bash
+python scripts/compact_runner.py \
+  --inputs "docs/exams/2026-EOGs/math/05_09_2026/NY_Math_Grade6_2023_Released_Test_Questions.pdf" \
+           "docs/exams/2026-EOGs/math/05_09_2026/NY_Regents_AlgebraI_Aug2023.pdf" \
+  --grade 6 \
+  --subject Math
+```
 
-- Accepts multiple input PDFs.
-- Optionally reads a CSV mapping input -> golden sample.
-- Runs `compact_source` and, on defects, logs them to `bug_log.csv` and prompts the user
-  to `retry`, `skip`, or `stop`.
-- `retry` performs a conservative automated adjustment (reduces `--scale-factor` by 5%)
-  and re-runs the pipeline.
+---
 
-Example runner (drop into `scripts/compact_runner.py`):
+## Arguments
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--inputs` | paths (1+) | required | Source PDF file(s) to compact |
+| `--grade` | int | required | Grade level (e.g. 3, 4, 5, 6) |
+| `--subject` | str | `Math` | Subject string written into output filenames |
+| `--columns` | int(s) | `1 2` | Layout(s) to produce. Accepts multiple values. Defaults to both 1-col and 2-col. |
+| `--max-pages` | int | `None` | Cap output at N pages per layout |
+| `--scale-factor` | float | `None` | Override image scale factor |
+
+To produce only one layout pass `--columns 1` or `--columns 2` explicitly.
+
+---
+
+## How the runner works
+
+`scripts/compact_runner.py` is an **in-process orchestrator** — it calls
+`run_compact_source_math()` directly (no subprocess) and shares one run folder
+across all inputs and column counts.
+
+Execution flow:
+
+```
+for each col_count in args.columns:          # default: [1, 2]
+    for each input PDF:
+        call run_compact_source_math(...)
+        append PASS / FAIL to results table
+
+run_post_generation_qa(run_path)             # programmatic QA on all outputs
+_print_qa_table(qa_results)                  # verdict table to stdout
+exit 1 if any hard-blocker FAIL
+```
+
+---
+
+## Output structure
+
+```
+.agent/evals/runs/math_worksheet_generation_from_source/<run_id>/
+  NY_Math_Grade4_2023_1col.pdf
+  NY_Math_Grade4_2023_2col.pdf
+  NY_Math_Grade5_2023_1col.pdf
+  NY_Math_Grade5_2023_2col.pdf
+  run.log
+```
+
+---
+
+## QA scenarios (run automatically after every batch)
+
+| ID | Check | Blocker? |
+|----|-------|----------|
+| QA-PACK-03 | Every output PDF has at least one image on page 0 (non-blank) | Hard |
+| QA-PACK-04 | Run folder contains only `.pdf` and `.log` files | Hard |
+| QA-PACK-05 | Output page count <= source page count | Soft / WARN |
+| QA-EXT-02 | Extracted images are >= 1200 px wide (confirms DPI) | Hard |
+| QA-EXT-03 | No image is >3x taller than wide (no page-height slivers) | Soft / WARN |
+| QA-REP-01 | `run.log` exists and is non-empty | Hard |
+| QA-REP-02 | `run.log` contains "blocks detected" line | Hard |
+| QA-REP-03 | `run.log` references expected grade strings (G3/G4/G5 only) | Hard |
+| QA-DET-05 | No block has Q#=0 (cover/session-heading pages in output) | Hard |
+
+**Known persistent failures:**
+- **QA-REP-03**: False positive for Grade 6 / Algebra I — check is hard-coded to
+  look for "Grade3/Grade4/Grade5". Fix pending.
+- **QA-DET-05**: Cover/session-heading raster pages still appear as Q#=0 blocks
+  (BUG-011 open — previous filter was reverted because it excluded real Q pages).
+
+---
+
+## Key implementation notes
+
+### NY sidebar x-position filter
+
+Real NY sidebar question markers sit at x0 approx 42-56 pts. False positives
+from fraction numerals and inline numbers appear at x0 >= 79 pts. The detector
+gates sidebar detection on `NY_SIDEBAR_MAX_X_PTS = 72.0` in `block_detector.py`.
+This fixed Q9 (Grade 5) and Q44 (Grade 4) being cut off in 05/09/2026 files.
+
+### Dual-column default
 
 ```python
-"""Interactive compact_source runner
-
-Usage example:
-  python scripts/compact_runner.py --inputs docs/exams/foo.pdf docs/exams/bar.pdf --grade 8 --subject Math --golden-mapping goldmap.csv
-
-goldmap.csv format (no header):
-  docs/exams/foo.pdf,goldens/foo_golden.pdf
-  docs/exams/bar.pdf,goldens/bar_golden.pdf
-"""
-import argparse
-import csv
-import shlex
-import subprocess
-import sys
-from pathlib import Path
-
-
-def run_compact(py_exe, src_pdf: Path, grade: int, subject: str, compare: bool, golden: Path | None, scale_factor: float | None, max_pages: int | None, columns: int) -> int:
-    cmd = [py_exe, "-m", "src.orchestrator", "compact_source", "--pdf", str(src_pdf), "--grade", str(grade), "--subject", subject]
-    if compare and golden:
-        cmd += ["--compare", "--golden", str(golden)]
-    if scale_factor is not None:
-        cmd += ["--scale-factor", str(scale_factor)]
-    if max_pages is not None:
-        cmd += ["--max-pages", str(max_pages)]
-    if columns is not None:
-        cmd += ["--columns", str(columns)]
-
-    print("Running:", " ".join(shlex.quote(c) for c in cmd))
-    p = subprocess.run(cmd)
-    return p.returncode
-
-
-def load_golden_map(path: Path) -> dict[str, Path]:
-    mapping = {}
-    if not path or not path.exists():
-        return mapping
-    with path.open("r", newline="") as fh:
-        rdr = csv.reader(fh)
-        for row in rdr:
-            if not row:
-                continue
-            src = row[0].strip()
-            golden = row[1].strip() if len(row) > 1 else ""
-            if src:
-                mapping[src] = Path(golden) if golden else None
-    return mapping
-
-
-def append_bug_log(log_path: Path, src: Path, golden: Path | None, returncode: int):
-    header = ["source", "golden", "returncode"]
-    exists = log_path.exists()
-    with log_path.open("a", newline="") as fh:
-        writer = csv.writer(fh)
-        if not exists:
-            writer.writerow(header)
-        writer.writerow([str(src), str(golden) if golden else "", str(returncode)])
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Run compact_source on multiple inputs with interactive repair loop")
-    parser.add_argument("--inputs", nargs="+", required=True)
-    parser.add_argument("--grade", type=int, required=True)
-    parser.add_argument("--subject", default="Math")
-    parser.add_argument("--golden-mapping", type=str, default=None, help="CSV file mapping input -> golden")
-    parser.add_argument("--scale-factor", type=float, default=None)
-    parser.add_argument("--max-pages", type=int, default=None)
-    parser.add_argument("--columns", type=int, choices=[1,2], default=1)
-    args = parser.parse_args()
-
-    mapping = load_golden_map(Path(args.golden_mapping)) if args.golden_mapping else {}
-    py_exe = sys.executable
-    log = Path("bug_log.csv")
-
-    for inp in args.inputs:
-        src = Path(inp)
-        if not src.exists():
-            print(f"Source not found: {src}")
-            continue
-        golden = mapping.get(str(src)) if mapping else None
-
-        current_scale = args.scale_factor
-        while True:
-            rc = run_compact(py_exe, src, args.grade, args.subject, golden is not None, golden, current_scale, args.max_pages, args.columns)
-            if rc == 0:
-                print(f"{src} -> PASS")
-                break
-            append_bug_log(log, src, golden, rc)
-            print(f"Detected issue with {src} (return code {rc}). Logged to {log}.")
-            choice = input("Action? [retry/skip/stop]: ").strip().lower()
-            if choice == "retry":
-                if current_scale is None:
-                    current_scale = 95.0
-                else:
-                    current_scale = max(50.0, current_scale - 5.0)
-                print(f"Retrying with scale-factor={current_scale}")
-                continue
-            elif choice == "skip":
-                break
-            elif choice == "stop":
-                print("Stopping run by user request.")
-                return
-            else:
-                print("Unknown choice. Please type 'retry', 'skip' or 'stop'.")
-                continue
-
-
-if __name__ == "__main__":
-    main()
+parser.add_argument("--columns", type=int, choices=[1, 2], nargs="+", default=[1, 2])
 ```
 
-Operational notes
+---
 
-- The orchestrator already supports `--compare` and `--golden` flags; the runner leverages them.
-- Comparison artifacts are written to the run's `comparisons` directory ΓÇö inspect those for visual diffs.
-- The runner logs defects into `bug_log.csv` so you can triage and track recurring issues.
+## Useful stdout filter
 
-Next steps
+```powershell
+python scripts/compact_runner.py --inputs ... --grade 5 --subject Math 2>&1 |
+  Select-String -Pattern "blocks detected|col\) ->|pages ->|Run ID:|  PASS|  FAIL|! QA|[*] QA|Verdict|DELIVERABLE|BLOCKED"
+```
 
-- Optionally add unit tests with mocked subprocesses for the runner.
-- Extend automated repair policies (adjust columns, max-pages) if conservative scale-only retries are insufficient.
+---
+
+## Baseline block counts
+
+| File | Grade | Blocks |
+|------|-------|--------|
+| NY Math G3 2023 (05/08) | 3 | 22 |
+| NY Math G4 2023 (05/08) | 4 | 27 |
+| NY Math G5 2023 (05/08) | 5 | 20 |
+| NY Math G4 2023 (05/09) | 4 | ~26 |
+| NY Math G5 2023 (05/09) | 5 | ~26 |
+| NY Math G6 2023 (05/09) | 6 | 30 |
+| NY Regents Algebra I Aug 2023 | -- | 36 |

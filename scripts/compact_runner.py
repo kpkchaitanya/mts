@@ -10,6 +10,7 @@ When multiple inputs share the same grade use --grade once.
 """
 import argparse
 import csv
+import re
 import sys
 import time
 from pathlib import Path
@@ -167,6 +168,12 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
+def _infer_grade(path: Path) -> int | None:
+    """Extract grade number from a filename like …Grade3… or …grade_4…"""
+    m = re.search(r'[Gg]rade[_\s-]?(\d+)', path.name)
+    return int(m.group(1)) if m else None
+
+
 def load_golden_map(path: Path) -> dict[str, Path]:
     mapping = {}
     if not path or not path.exists():
@@ -188,7 +195,8 @@ def main():
         description="Run compact_source on multiple inputs with a shared run folder"
     )
     parser.add_argument("--inputs", nargs="+", required=True)
-    parser.add_argument("--grade", type=int, required=True)
+    parser.add_argument("--grade", type=int, default=None,
+                        help="Grade number (applied to all inputs). Omit to auto-detect from each filename.")
     parser.add_argument("--subject", default="Math")
     parser.add_argument("--golden-mapping", type=str, default=None)
     parser.add_argument("--scale-factor", type=float, default=None)
@@ -223,12 +231,18 @@ def main():
         golden = mapping.get(str(src)) if mapping else None
         current_scale = args.scale_factor
 
+        grade = args.grade if args.grade is not None else _infer_grade(src)
+        if grade is None:
+            print(f"Cannot determine grade for {src.name} — pass --grade or rename the file to include 'GradeN'.")
+            results.append((src.name, "SKIP (no grade)"))
+            continue
+
         for col_count in args.columns:
             while True:
                 try:
                     run_compact_source_math(
                         pdf_path=src,
-                        grade=args.grade,
+                        grade=grade,
                         subject=args.subject,
                         columns=col_count,
                         scale_factor=current_scale,
