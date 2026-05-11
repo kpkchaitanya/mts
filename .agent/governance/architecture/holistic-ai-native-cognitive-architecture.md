@@ -584,6 +584,34 @@ Gherkin operationalizes executable behavior.
 
 ---
 
+# 7.4 Governing Framework — Product Management and Intent Clarity
+
+The semantic patterns described in Sections 7.1–7.3
+(PRDs, User Stories, INVEST, EARS, Gherkin, decomposition hierarchy)
+are governed in full operational detail by the
+**Holistic AI-Native Product Management Framework**:
+
+```text
+governance/architecture/product-management/holistic-ai-product-management-framework.md
+```
+
+That document is the **primary authority** for:
+
+* the SDLC semantic hierarchy (Vision → Epic → Story → EARS → Gherkin → Spec → Eval)
+* INVEST validation of user stories before any spec is written
+* EARS requirement syntax and pattern library
+* Gherkin scenario design and anti-patterns
+* decomposition strategies for AI-agent execution
+* intent crystallization before implementation begins
+* traceability obligations from business goal to eval
+
+**Mandate for this repository:**
+Any feature that cannot be traced to a properly decomposed story and a set of EARS requirements
+is not eligible for implementation. This cognitive architecture defines *what* the Product Intent Layer does;
+the PM Framework defines *how* to execute it with semantic rigor.
+
+---
+
 # 8. AI-Native SDLC
 
 Traditional SDLC:
@@ -833,6 +861,24 @@ Phase 7 — Regression
 
 Before any implementation begins, a spec must pass this checklist.
 A "No" on any item is a signal to stop and repair the spec first.
+
+**Intent Clarity (governed by PM Framework §§3–23)**
+
+| # | Question | PM Framework Reference | Signal if No |
+|---|----------|-----------------------|--------------|
+| IC-1 | Does a parent Epic exist and is this spec traceable to it? | §3 Core SDLC Hierarchy | Feature is untethered from business vision |
+| IC-2 | Is there a valid INVEST user story — independent, negotiable, valuable, estimable, small, testable? | §5 INVEST Framework | Story is not ready; flag each violated letter |
+| IC-3 | Are all requirements written in EARS syntax (Ubiquitous / Event-Driven / Unwanted / State / Optional / Complex)? | §§6–10 EARS Framework | Requirements are ambiguous — AI agents will drift |
+| IC-4 | Are Gherkin scenarios present and observable (no internal/implementation assertions)? | §§11–16 Gherkin Framework | Acceptance criteria cannot be verified from outside the system |
+| IC-5 | Does the story exhibit any of the 6 AI-Generated Story Smells (mixed abstraction, fake user story, large story, hidden dependency, internal Gherkin, repeated logic)? | §23 Story Smells | Stop; resolve the smell before writing the spec |
+| IC-6 | Is the hierarchy complete — Vision → Epic → Story → EARS requirements → Gherkin scenarios → Spec? | §20 AI-Native Hierarchy | Traceability is broken; downstream evals have no anchor |
+
+> **PM Framework:** `governance/architecture/product-management/holistic-ai-product-management-framework.md`
+> This is the primary authority for all intent-clarity checks above. A spec that fails any IC row must be returned to PM-layer review before implementation proceeds.
+
+---
+
+**Spec Structure and Readiness**
 
 | # | Question | Signal if No |
 |---|----------|--------------|

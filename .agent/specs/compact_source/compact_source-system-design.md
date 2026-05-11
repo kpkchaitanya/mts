@@ -1,6 +1,9 @@
 # compact_source — System Design
 
-> **Superseded.** Content merged into [compact_source-design.md](compact_source-design.md) §1–§5.
+> **Superseded.** Content merged into [compact_source-hld.md](compact_source-hld.md) (pipeline overview, data model, module dependencies) and [compact_source-lld.md](compact_source-lld.md) (detailed algorithms, phase delivery log).
+
+*This file is kept as a redirect only. Do not edit.*
+
 
 ---
 

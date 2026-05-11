@@ -102,13 +102,14 @@ Improvements become formal spec changes only after they are reviewed and accepte
 ## 6. Authority Chain
 
 ```
-Soul → Constitution → Agent Protocol → Spec → Eval → Workflow → Agents → Output
+Soul → Constitution → PM Framework → Agent Protocol → Spec → Eval → Workflow → Agents → Output
 ```
 
 Higher layers override lower layers. No exceptions.
 
 `soul.md` is the highest authority on *why*.
 `constitution.md` is the highest authority on *how the system behaves*.
+`holistic-ai-product-management-framework.md` is the primary authority on *product intent, semantic decomposition, and requirements clarity*. All specs must trace upward through it.
 `agent.md` is the operating protocol for all agents — pipeline and coding alike.
 
 ---
@@ -142,8 +143,7 @@ The teachers handle judgment, connection, and care.
 
 | Document | Purpose |
 |----------|---------|
-| `soul.md` | The philosophy and values of MTS — the why |
-| `constitution.md` | Governing principles for the AI system (this document) |
+| `soul.md` | The philosophy and values of MTS — the why || `architecture/product-management/holistic-ai-product-management-framework.md` | **Primary authority for product management and intent clarity.** Defines semantic hierarchy (Epic → Story → EARS → Gherkin), INVEST/EARS/Gherkin frameworks, decomposition strategy, and the standards all specs must satisfy. Every feature spec must trace to this framework. || `constitution.md` | Governing principles for the AI system (this document) |
 | `agent.md` | Operating protocol for all agents |
 | `persona.md` | Agent behavioral expression and voice |
 | `role.md` | Agent functional responsibilities and authority chain |

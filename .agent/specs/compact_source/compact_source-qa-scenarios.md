@@ -1,4 +1,4 @@
-# qa-scenarios.md — Functional QA Scenarios: compact_source_math
+# compact_source-qa-scenarios.md — Functional QA Scenarios: compact_source_math
 
 **Feature:** `compact_source_math`  
 **Version:** v2

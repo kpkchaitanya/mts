@@ -171,3 +171,31 @@ All internal documents (specs, evals, decisions) use:
 * Tables for comparative information
 * Code blocks for commands and code snippets
 * Status badges: `Active`, `Draft`, `Deprecated`, `Archived`
+
+---
+
+## 8. Document Size and Structure Standards
+
+Prefer small, single-purpose, high-signal markdown files.
+
+| Document Type | Target Length |
+|--------------|--------------|
+| Operational / canonical (agent.md, standards.md, etc.) | 1-3 pages |
+| Deeper references (spec, HLD, LLD, PRD) | 3-8 pages |
+| Structured reference / index material (traceability, backlog) | as needed |
+
+### 8.1 When a document grows beyond its target range
+
+* **Split by responsibility** - each file owns exactly one concern.
+* **Preserve canonical ownership** - the source-of-truth for each topic lives in one file only; other files reference, they do not repeat.
+* **Maintain navigational index docs** - every spec folder must have a `README.md` that maps all files and their read order.
+* **Avoid duplication across files** - if the same content appears in two files, one of them is wrong.
+
+### 8.2 Split signals
+
+A document should be split when any of these are true:
+
+* It contains two or more distinct responsibilities (e.g., algorithm detail mixed with delivery history).
+* A reader of one section never needs the other section.
+* A section is updated on a different cadence than the rest of the file.
+* The file exceeds the target range and the excess is not index/reference material.

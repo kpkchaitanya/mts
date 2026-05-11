@@ -26,7 +26,8 @@ Both categories must honor this protocol. No exceptions.
 
 These rules apply regardless of agent type:
 
-1. **Honor the authority chain.** Soul → Constitution → agent.md → Spec → Workflow → Agent → Output. Higher layers override lower layers.
+1. **Honor the authority chain.** Soul → Constitution → PM Framework → agent.md → Spec → Workflow → Agent → Output. Higher layers override lower layers.
+2. **Product intent is governed by the PM Framework.** When evaluating whether a spec is well-formed, whether a user story is correctly decomposed, or whether requirements are clear, consult `.agent/governance/architecture/product-management/holistic-ai-product-management-framework.md`. This is the single source of truth for product management questions. A spec that violates the PM Framework must be flagged before implementation begins.
 2. **Never bypass QA.** No output proceeds past a QA failure.
 3. **Every run produces artifacts.** Nothing is a black box. If it ran, it left a trace.
 4. **Student-first standard.** Any output that would confuse, mislead, or discourage a student fails — regardless of technical correctness.

@@ -82,6 +82,40 @@ Teachers cannot reformat these PDFs manually: math symbols, graphs, geometric fi
 - No partial questions (a block shall not end mid-question)
 - No extra empty blocks prepended or appended
 
+**EARS Requirements**
+
+*Ubiquitous — always-true system obligations:*
+
+- REQ-05-U1: The system shall classify a PDF as `text_rich` when fewer than 50% of sampled content pages contain 5 words or fewer.
+- REQ-05-U2: The system shall detect block boundaries for `text_rich` PDFs by scanning for question-number lines matching `QUESTION_LINE_PATTERN` (e.g., `^\d+\.?\s` or `^Q\d+`).
+- REQ-05-U3: The system shall start a new block at each line that matches `QUESTION_LINE_PATTERN` and end the block at the line immediately before the next match, at the page boundary, or at the answer key fence — whichever comes first.
+- REQ-05-U4: The system shall produce exactly 32 blocks for a valid STAAR 2022 Grade 3 PDF, 35 blocks for Grade 4, and 36 blocks for Grade 5.
+- REQ-05-U5: The system shall guarantee that no block spans more than `DEFAULT_MAX_BLOCK_PAGES` (default: 2) pages.
+
+*Event-Driven — triggered by classification result:*
+
+- REQ-05-E1: When format detection returns `text_rich`, the system shall route block detection exclusively to `_detect_text_rich_blocks()` and shall not execute any `image_heavy` detection logic.
+- REQ-05-E2: When `_detect_text_rich_blocks()` finds fewer than `MIN_QUESTIONS_FALLBACK` (default: 3) blocks by regex scan, the system shall invoke the Claude vision fallback and send page renders for boundary detection.
+- REQ-05-E3: When the answer key fence is detected in a `text_rich` PDF, the system shall exclude all pages from the fence page onward from block detection.
+
+*Unwanted — conditions the system must reject or contain:*
+
+- REQ-05-W1: If a `QUESTION_LINE_PATTERN` match is found on a page within the answer key fence range, the system shall discard that match and not create a block from it.
+- REQ-05-W2: If a block boundary scan would produce a block with zero extractable content (empty y-range), the system shall discard that block rather than passing an empty block downstream.
+- REQ-05-W3: If the Claude vision fallback is invoked and returns a block count inconsistent with the regex result by more than `FALLBACK_DISAGREEMENT_THRESHOLD`, the system shall log a `WARNING` and use the Claude result.
+
+*State-Driven — while in a specific pipeline state:*
+
+- REQ-05-S1: While processing a `text_rich` PDF, the system shall not apply the `_find_image_heavy_y_bottom` footer-exclusion strategy; `y_bottom` is derived from text line bounding boxes only.
+- REQ-05-S2: While processing a `text_rich` block, the system shall apply `_trim_constructed_response_blocks()` for any block whose text contains a line matching `CR_TRIM_MARKERS` (see spec §5.5).
+
+*Optional — where a feature flag is active:*
+
+- REQ-05-O1: Where `columns=2` is specified, the system shall pack all `text_rich` blocks into 2-column layout using the same `PdfPacker.pack()` path as `image_heavy`, with no `text_rich`-specific packing logic.
+- REQ-05-O2: Where `question_list` is not `"ALL"`, the system shall filter the detected block list to only the specified question numbers before passing to extraction; question numbering is 1-based and derived from block detection order.
+
+**Spec Reference:** spec.md §4 (format detection), §5.2 (text_rich path), §5.5 (CR trimming), §4.3 (constants)
+
 ### US-06 — File size is reported
 > As Ravi, after every run, I see input size → output size and savings in the terminal and in the compaction report.
 
@@ -209,3 +243,4 @@ Teachers cannot reformat these PDFs manually: math symbols, graphs, geometric fi
 |---------|------|--------|
 | v1 | 2026-04-26 | Initial PRD — US-01 through US-08 |
 | v2 | 2026-05-10 | Added US-09 (human gate), US-10 (question number labels), US-11 (visual comparison). Removed visual comparison from Non-Goals. Added Q4, Q5. Traceability gap closure from compact_source-traceability.md audit. |
+| v3 | 2026-05-10 | Added EARS requirements to US-05 (STAAR text-rich): 12 EARS sentences covering Ubiquitous (U1–U5), Event-Driven (E1–E3), Unwanted (W1–W3), State-Driven (S1–S2), Optional (O1–O2). Closes IC-3 for US-05. |

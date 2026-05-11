@@ -1,13 +1,14 @@
 # compact_source — Design
 
-**Feature:** `compact_source`
-**Version:** v1
-**Status:** Active
-**Date:** 2026-04-26
-**Spec:** [compact_source-spec.md](compact_source-spec.md)
-**PRD:** [compact_source-prd.md](compact_source-prd.md)
+> **Superseded.** This document has been split into two focused documents:
+>
+> | Document | Purpose |
+> |----------|---------|
+> | [compact_source-hld.md](compact_source-hld.md) | High-Level Design — pipeline overview, data model, module dependencies, architectural decisions, holistic platform impacts |
+> | [compact_source-lld.md](compact_source-lld.md) | Low-Level Design — per-algorithm design, constants, telemetry schema, logging architecture, phase delivery log |
 
-This document is the living implementation record for `compact_source`. It covers system architecture (§1–§5) and a phase delivery log (§6) that grows as each phase completes. Platform-level concerns (observability, resilience, quality, self-improvement) live in [../platform/](../platform/README.md) — this document references them but does not repeat them.
+*This file is kept as a redirect only. Do not edit.*
+
 
 ---
 
