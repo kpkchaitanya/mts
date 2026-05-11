@@ -872,6 +872,7 @@ A "No" on any item is a signal to stop and repair the spec first.
 | IC-4 | Are Gherkin scenarios present and observable (no internal/implementation assertions)? | §§11–16 Gherkin Framework | Acceptance criteria cannot be verified from outside the system |
 | IC-5 | Does the story exhibit any of the 6 AI-Generated Story Smells (mixed abstraction, fake user story, large story, hidden dependency, internal Gherkin, repeated logic)? | §23 Story Smells | Stop; resolve the smell before writing the spec |
 | IC-6 | Is the hierarchy complete — Vision → Epic → Story → EARS requirements → Gherkin scenarios → Spec? | §20 AI-Native Hierarchy | Traceability is broken; downstream evals have no anchor |
+| IC-7 | Do all domain terms used in the spec have a canonical definition in `mts-ontology.md`? Are there naming collisions between ontology terms and spec-local terms? | `mts-ontology.md` §3 Entity Definitions | Terminology drift — agents and code will use the same word for different things |
 
 > **PM Framework:** `governance/architecture/product-management/holistic-ai-product-management-framework.md`
 > This is the primary authority for all intent-clarity checks above. A spec that fails any IC row must be returned to PM-layer review before implementation proceeds.

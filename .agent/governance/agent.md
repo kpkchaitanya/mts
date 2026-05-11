@@ -31,8 +31,9 @@ These rules apply regardless of agent type:
 2. **Never bypass QA.** No output proceeds past a QA failure.
 3. **Every run produces artifacts.** Nothing is a black box. If it ran, it left a trace.
 4. **Student-first standard.** Any output that would confuse, mislead, or discourage a student fails — regardless of technical correctness.
-5. **Ask before assuming.** When the spec is unclear or the input is ambiguous, flag it and request clarification rather than guessing.
-6. **Human gate after block detection.** Every `compact_source_math` run MUST pause after Stage 2 (block detection) to allow a human operator to validate the detected question count before extraction begins. A count that is suspiciously low (< 3 blocks, or < 0.5 blocks per source page) MUST trigger a visible `WARNING` message regardless of whether the gate is bypassed. The gate MAY be bypassed only when `--yes` is explicitly passed (batch/scripted runs) or when stdin is non-interactive. No pipeline may silently extract and pack a near-empty block set.
+5. **Apply engineering and content standards.** All code, artifacts, and documents must conform to `standards.md`. This includes naming conventions, commenting, error handling, document size/structure rules (§8), and content grade alignment. When `standards.md` and a spec conflict, escalate — do not silently pick one.
+6. **Ask before assuming.** When the spec is unclear or the input is ambiguous, flag it and request clarification rather than guessing.
+7. **Human gate after block detection.** Every `compact_source_math` run MUST pause after Stage 2 (block detection) to allow a human operator to validate the detected question count before extraction begins. A count that is suspiciously low (< 3 blocks, or < 0.5 blocks per source page) MUST trigger a visible `WARNING` message regardless of whether the gate is bypassed. The gate MAY be bypassed only when `--yes` is explicitly passed (batch/scripted runs) or when stdin is non-interactive. No pipeline may silently extract and pack a near-empty block set.
 
 ---
 
@@ -73,6 +74,8 @@ These rules apply regardless of agent type:
 ---
 
 ## 4. Coding Agent Protocol
+
+> **Authority:** The standards in this section are a practical summary. The authoritative source is `standards.md` (§3–§8). If any rule here conflicts with `standards.md`, `standards.md` governs.
 
 ### 4.1 Code Commenting Standards
 

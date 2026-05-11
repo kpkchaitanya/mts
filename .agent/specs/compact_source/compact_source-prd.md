@@ -1,7 +1,7 @@
 # compact_source-prd.md — Product Requirements Document
 
 **Feature:** `compact_source`
-**Version:** v2
+**Version:** v4
 **Status:** Active
 **Date:** 2026-05-10
 
@@ -39,7 +39,31 @@ Teachers cannot reformat these PDFs manually: math symbols, graphs, geometric fi
 
 ## 3. User Stories
 
-### US-01 — Single PDF, one column
+### 3.0 User Story Analysis — Intent Review Table
+
+Compact reference for human intent review, PM-layer planning, and IC-checklist triage.
+Each row is a decision surface — not a spec. Elaboration lives in §3.1–3.11 and downstream artifacts.
+
+| Story ID | Functional Area | Business Outcome | Primary Trigger | Core Behavior | EARS Type | Gherkin Status | Main Technical Concerns | Cross-Cutting Concerns | INVEST Risk | Recommended Split |
+|----------|----------------|-----------------|----------------|--------------|-----------|---------------|------------------------|----------------------|-------------|------------------|
+| US-01 | Output Generation | Print-ready 1-col PDF | Teacher runs CLI `--pdf <file>` | Detect blocks → extract → pack 1-col → report | Ubiquitous | ✅ QA-PACK-01/03, E2E-01 | `PdfPacker.pack()`, file naming, orchestrator | Pixel fidelity, run artifacts | No EARS written | Separate packing from orchestration |
+| US-02 | Output Generation | Denser layout, more questions/page | `--columns 2` flag | Scale blocks to column width, 2-col pack | Optional (flag-driven) | ✅ QA-PACK-02/05 | `PdfPacker.pack(columns=2)`, block scaling | No clipping, pixel fidelity | Dependent on US-01 | Can stay merged |
+| US-03 | Batch Processing | Process N exams in one invocation | `--pdf <folder>` | Walk folder, shared run ID, per-PDF report | State-Driven (while folder input) | ✅ QA-PACK-04, E2E-01 | Orchestrator folder walk, shared run ID | Error isolation per file, run artifacts | Moderate scope | Separate error-isolation per file |
+| US-04 | Format Detection + Block Detection | Correct blocks from image-heavy exams | `image_heavy` PDF submitted | Classify format → detect by image boundary → exclude answer key fence | Event-Driven + Unwanted | ✅ QA-DET-01–05, EXT-01–04 | `_classify_format()`, `_find_answer_key_fence()`, y_bottom | Format detection accuracy, golden counts | Complex; deployed but partial QA | Separate format detect / AK fence / CR trim |
+| US-05 | Format Detection + Block Detection | Correct block boundaries in text-based exams | `text_rich` PDF submitted | Classify as text_rich → detect via `QUESTION_LINE_PATTERN` → Claude fallback | Ubiquitous + Event-Driven + Unwanted + State-Driven + Optional | ❌ Pending STAAR PDFs (IMP-024) | `_detect_text_rich_blocks()`, Claude fallback, CR trim | Golden block counts (gr3=32/gr4=35/gr5=36), Claude API resilience | Not implemented; STAAR PDFs needed | Separate regex path / Claude fallback / CR trim |
+| US-06 | Reporting | Transparency on compaction savings | Every successful run | Compute input→output size delta; write to terminal + report | Ubiquitous | ✅ QA-REP-01–03 | `Reporter.generate()`, file size format | Run artifacts, larger-than-source edge case | Low risk | None needed |
+| US-07 | Input Validation | No mystery failures; operational reliability | Unreadable / corrupted / encrypted PDF submitted | Raise `ValidationError` before pipeline; non-zero exit | Unwanted | ✅ QA-VAL-01–04 | Orchestrator validation, exception taxonomy | Exit codes, observability | Not a true user story — system quality | Consider converting to platform resilience capability |
+| US-08 | Block Detection | No wasted blank space in printed output | Block contains `CR_TRIM_MARKERS` | Trim `y_bottom` to first marker + `CR_BLANK_LINES_KEEP` lines | State-Driven (while CR markers present) | ❌ No Gherkin | `_trim_constructed_response_blocks()`, y_bottom | Pixel fidelity, ≥1 blank line preserved | Coupled to block detection; no Gherkin (IC-4 gap) | Separate NY format detection from trim logic |
+| US-09 | Operator Safety Gate | Prevent defective output reaching teachers | Block detection complete in interactive mode | Display count+format → prompt Y/n → abort on n | State-Driven + Unwanted (LOW COUNT WARNING) | ✅ QA-HG-01–04 | Orchestrator gate, TTY detection, `--yes` flag | Observability, non-interactive stdin detection | Low risk; implemented | None needed |
+| US-10 | Output Quality | Students can reference original question numbers | `image_heavy` format output | Overlay question number label on each block image | State-Driven (while image_heavy) + Optional (`--no-question-numbers`) | ❌ No Gherkin | `PdfPacker._render()`, PDF text overlay, white background rect | PDF text extractability | No Gherkin (IC-4 gap); implemented | Separate auto-enable logic from label rendering |
+| US-11 | QA / Regression Detection | Catch visual regressions after code changes | `--compare --golden <path>` flag | SSIM per-page comparison; flag pages below threshold as REVIEW | Optional + Event-Driven (page count mismatch) | ✅ QA-CMP-01–04 | `comparator.py`, SSIM, `COMPARATOR_SIMILARITY_THRESHOLD` | Operator judgment (REVIEW not FAIL), golden sample management | Weak business ownership; more platform capability | Separate comparison engine from reporting |
+
+**IC-3 gap:** EARS written only for US-05. US-01–04, US-06–11 have acceptance criteria only. See RISK-08 in `compact_source-traceability.md`.
+**IC-4 gap:** Gherkin missing for US-05, US-08, US-10. See traceability RISK-01, CS-024.
+
+---
+
+
 > As Krishna, I run `python -m src.orchestrator compact_source --pdf <path>` on a single STAAR exam PDF and receive a compacted 1-column PDF in the output folder, containing all question blocks from the original.
 
 **Acceptance Criteria:**
@@ -244,3 +268,4 @@ Teachers cannot reformat these PDFs manually: math symbols, graphs, geometric fi
 | v1 | 2026-04-26 | Initial PRD — US-01 through US-08 |
 | v2 | 2026-05-10 | Added US-09 (human gate), US-10 (question number labels), US-11 (visual comparison). Removed visual comparison from Non-Goals. Added Q4, Q5. Traceability gap closure from compact_source-traceability.md audit. |
 | v3 | 2026-05-10 | Added EARS requirements to US-05 (STAAR text-rich): 12 EARS sentences covering Ubiquitous (U1–U5), Event-Driven (E1–E3), Unwanted (W1–W3), State-Driven (S1–S2), Optional (O1–O2). Closes IC-3 for US-05. |
+| v4 | 2026-05-10 | Added §3.0 User Story Analysis Table — compact intent review surface covering all 11 stories with EARS type, Gherkin status, technical concerns, INVEST risks, and recommended splits. IC gap callouts added. |
